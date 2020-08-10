@@ -1,0 +1,2359 @@
+---
+title: "bootstrap"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "C:/Users/slewa/Projects/heat_stress")
+
+library(tidyverse)
+library(readxl)
+library(knitr)
+library(kableExtra)
+library(purrr)
+library(furrr)
+library(boot)
+library(lme4)
+library(ICC) 
+library(dotwhisker)
+library(broom)
+library(car)
+library(reshape2)
+library(sjPlot)
+library(readxl)
+library(broom.mixed)
+library(bbmle)
+library(glmmTMB)
+library(performance)
+library(MASS)
+library(mgcv)
+library(gridExtra)
+library(tableone)
+library(corrr)
+library(psych)
+library(zoo)
+library(patchwork) # install_github("thomasp85/patchwork")
+```
+
+Annual models from DMED data.
+
+## Load and prepare data
+```{r load_datasets, message = FALSE}
+
+joined_hsi <-
+  read_rds("data/joined_hsi.rds")
+
+canopy_stats <-
+  read_rds("data/canopy_stats_na_reclassified.rds") %>% 
+  mutate(installation_lower = janitor::make_clean_names(installation))
+
+# Remove Fort Irwin/NTC due to low counts/rates and transient training
+# Remove initial year of health outcomes (1990 for Hospitilizations, 1997 for Ambulatory)
+
+hsi_data <-
+  joined_hsi %>% 
+    left_join(canopy_stats %>% 
+                dplyr::select(installation_lower, mean_canopy),
+              by = c("installation" = "installation_lower")) %>% 
+    filter(!installation %in% "ntc_and_fort_irwin",
+           !(type %in% "Hospitalizations" & year %in% 1990),
+           !(type %in% "Ambulatory Data" & year %in% 1997)) %>% 
+    mutate(installation = factor(installation, ordered = FALSE),
+         index = factor(index, ordered = FALSE),
+         type = factor(type, ordered = FALSE),
+         bct = factor(bct), 
+         installation = relevel(installation, ref = "fort_bliss"))
+
+levels(hsi_data$installation)
+
+summary(hsi_data)
+
+
+hsi_select <- hsi_data %>% 
+  filter(index %in% c("days_tmp_gt85pct_may_sep",              #relative, heat season
+                      "days_wbgt_gt85pct_may_sep",             #relative, heat season
+                      "days_heat_index_gt85pct_may_sep",       #relative, heat season
+                      "tmp_mean_may_sep",                      #absolute, heat season
+                      "heat_index_mean_may_sep",               #absolute, heat season
+                      "wbgt_f_mean_may_sep",                   #absolute, heat season
+                      "tmp_f_mean",                            #absolute, year-round
+                      "heat_index_mean",                       #absolute, year-round
+                      "wbgt_f_mean"))                          #absolute, year-round
+
+
+hsi_select
+
+```
+
+### Outcome-specific datasets
+
+```{r outcome_filtered}
+
+ambulatory_data <-
+  hsi_select %>%
+      filter(type %in% "Ambulatory Data") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+hospitalization_data <-
+  hsi_select %>%
+      filter(type %in% "Hospitalizations") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+rme_data <-
+  hsi_select %>%
+      filter(type %in% "Reportable Events") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+ambulatory_data_full <-
+  hsi_data %>%
+      filter(type %in% "Ambulatory Data") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+hospitalization_data_full <-
+  hsi_data %>%
+      filter(type %in% "Hospitalizations") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+rme_data_full <-
+  hsi_data %>%
+      filter(type %in% "Reportable Events") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+
+```
+
+
+
+Note: "days_tmp_gt95pct_may_sep", for each calendar day, compares mean daily temperature with 95th %-ile of 30-year (1990-2019) climatology for that day
+
+
+### Read-in bootstrap model data 
+
+```{r read_in_models}
+
+amb_boot_2yr_block <- read_rds("data/amb_boot_2yr_block.rds")
+hosp_boot_2yr_block <- read_rds("data/hosp_boot_2yr_block.rds")
+rme_boot_2yr_block <- read_rds("data/rme_boot_2yr_block.rds")
+
+amb_boot_2yr_block_all <- read_rds("data/amb_boot_2yr_block_all.rds")
+hosp_boot_2yr_block_all <- read_rds("data/hosp_boot_2yr_block_all.rds")
+rme_boot_2yr_block_all <- read_rds("data/rme_boot_2yr_block_all.rds")
+
+
+amb_boot_3yr_block <- read_rds("data/amb_boot_3yr_block.rds")
+hosp_boot_3yr_block <- read_rds("data/hosp_boot_3yr_block.rds")
+rme_boot_3yr_block <- read_rds("data/rme_boot_3yr_block.rds")
+
+amb_boot_std <- read_rds("data/amb_boot_std.rds")
+hosp_boot_std <- read_rds("data/hosp_boot_std.rds")
+rme_boot_std <- read_rds("data/rme_boot_std.rds")
+
+amb_nb <- read_rds("data/amb_nb.rds")
+hosp_nb <- read_rds("data/hosp_nb.rds")
+rme_nb <- read_rds("data/rme_nb.rds")
+```
+
+
+
+
+
+## Base models (with and without year)
+
+```{r}
+
+nb_fun = function(df) {
+  df %>%
+    MASS::glm.nb(count ~ value + installation + offset(log(population)), data = .)
+}
+
+nb_year_fun = function(df) {
+  df %>%
+    MASS::glm.nb(count ~ value + installation + year + offset(log(population)), data = .)
+}
+
+
+amb_nb <-
+  ambulatory_data %>% 
+    nest(data = installation:population) %>% 
+    mutate(nb_mod = map(data, nb_fun),
+           nb_tidy =   map(nb_mod, ~ broom::tidy(., conf.int = TRUE)),
+           nb_year_mod = map(data, nb_year_fun),
+           nb_year_tidy = map(nb_year_mod, ~ broom::tidy(., conf.int = TRUE)))
+
+
+hosp_nb <-
+  hospitalization_data %>% 
+    nest(data = installation:population) %>% 
+    mutate(nb_mod = map(data, nb_fun),
+           nb_tidy =   map(nb_mod, ~ broom::tidy(., conf.int = TRUE)),
+           nb_year_mod = map(data, nb_year_fun),
+           nb_year_tidy = map(nb_year_mod, ~ broom::tidy(., conf.int = TRUE)))
+
+hosp_nb 
+
+
+rme_nb <-
+  rme_data %>% 
+    nest(data = installation:population) %>% 
+    mutate(nb_mod = map(data, nb_fun),
+           nb_tidy =   map(nb_mod, ~ broom::tidy(., conf.int = TRUE)),
+           nb_year_mod = map(data, nb_year_fun),
+           nb_year_tidy = map(nb_year_mod, ~ broom::tidy(., conf.int = TRUE)))
+
+
+#write_rds(amb_nb, "data/amb_nb.rds")
+#write_rds(hosp_nb, "data/hosp_nb.rds")
+#write_rds(rme_nb, "data/rme_nb.rds")
+
+```
+
+
+
+## Bootstrap negative binomial models
+
+Issue: control for long-term time trends; including `year` as a dummy time variable pulls variane also associated with changes in temperature/heat.
+
+Approach: bootstrap model, selecting iterations of 2-3 year intervals to control for time trend.  
+Execute resampling of dataset and calculation of your statistics on these samples.
+
+
+## Random year blocks
+
+### 2-year block limits (min and max year)
+```{r random_blocks}
+
+set.seed(82)
+
+amb_min_yr <- min(as.numeric(
+                hsi_select %>% 
+                  filter(type %in% "Ambulatory Data") %>% 
+                  pull(year)))
+
+amb_max_yr <- max(as.numeric(
+                hsi_select %>% 
+                  filter(type %in% "Ambulatory Data") %>% 
+                  pull(year)))
+
+
+# Create randomized year dataframe (not currently used)
+# Random years for two year block
+amb_random_yrs_10k <- sample(amb_min_yr:(amb_max_yr - 1), size = 10000, replace = TRUE) 
+
+# Dataframe of 10,000 random two year blocks
+amb_two_yr_blocks <-
+  amb_random_yrs_10k %>% 
+    tibble::enframe(name = NULL) %>% 
+    rename(first_yr = value) %>% 
+    mutate(second_yr = first_yr + 1) 
+
+amb_two_yr_blocks
+
+################################################################
+
+hosp_min_yr <- min(as.numeric(
+                hsi_select %>% 
+                  filter(type %in% "Hospitalizations") %>% 
+                  pull(year)))
+
+hosp_max_yr <- max(as.numeric(
+                hsi_select %>% 
+                  filter(type %in% "Hospitalizations") %>% 
+                  pull(year)))
+
+
+
+######################################################################
+
+rme_min_yr <- min(as.numeric(
+                hsi_select %>% 
+                  filter(type %in% "Reportable Events") %>% 
+                  pull(year)))
+
+rme_max_yr <- max(as.numeric(
+                hsi_select %>% 
+                  filter(type %in% "Reportable Events") %>% 
+                  pull(year)))
+
+# For two year block
+
+rme_random_yrs_10k <- sample(rme_min_yr:(rme_max_yr - 1), size = 10000, replace = TRUE) 
+
+# Dataframe of 10,000 random two year blocks
+rme_two_yr_blocks <-
+  rme_random_yrs_10k %>% 
+    tibble::enframe(name = NULL) %>% 
+    rename(first_yr = value) %>% 
+    mutate(second_yr = first_yr + 1) 
+
+rme_two_yr_blocks
+
+```
+
+
+### Bootstrap random two year blocks
+Draw random blocks with replacement; stitch to original dataframe length
+
+```{r amb_boot_2yr, eval = FALSE}
+
+amb_index_2yr_fun <- function(x, i) {
+  # Select random start year
+  random_year <- replicate(10, sample(amb_min_yr:(amb_max_yr - 1), size = 1, replace = TRUE))
+  # select the observations to subset. 
+  block_obs <- 
+    map_dfr(random_year, ~ x %>% 
+      filter(year %in% c(random_year, random_year + 1) ))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+# citation("MASS")
+
+ptm <- proc.time()
+
+amb_boot_2yr_block <-
+  ambulatory_data %>% 
+    nest(amb_data = installation:population) %>% 
+  mutate(boot = map(amb_data, ~ boot(., amb_index_2yr_fun, 10000)),
+         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+
+amb_boot_2yr_block <-
+  amb_boot_2yr_block %>% 
+    mutate(tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
+
+# Warnings: In norm.inter(t, adj.alpha) : extreme order statistics used as endpoints
+
+#write_rds(amb_boot_2yr_block, path = "data/amb_boot_2yr_block.rds")
+
+
+```
+
+
+```{r hosp_boot_2yr, eval = FALSE}
+
+hosp_index_2yr_fun <- function(x, i) {
+  # Select random start year
+  random_year <- replicate(13, sample(hosp_min_yr:(hosp_max_yr - 1), size = 1, replace = TRUE))
+  # select the observations to subset. 
+  block_obs <- 
+    map_dfr(random_year, ~ x %>% 
+      filter(year %in% c(random_year, random_year + 1) ))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+ptm <- proc.time()
+
+hosp_boot_2yr_block <-
+  hospitalization_data %>% 
+    nest(hosp_data = installation:population) %>% 
+  mutate(boot = map(hosp_data, ~ boot(., hosp_index_2yr_fun, 10000)),
+         tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+hosp_boot_2yr_block <-
+  hosp_boot_2yr_block %>% 
+    mutate(tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
+
+
+# 41 warnings for BCa CI, In norm.inter(t, adj.alpha) : extreme order statistics used as endpoints
+
+
+write_rds(hosp_boot_2yr_block, path = "data/hosp_boot_2yr_block.rds")
+
+```
+
+```{r  rme_boot_2yr, eval = FALSE}
+
+rme_index_2yr_fun <- function(x, i) {
+  # Select random start year
+  random_year <- replicate(11, sample(rme_min_yr:(rme_max_yr - 1), size = 1, replace = TRUE))
+  # select the observations to subset. 
+  block_obs <- 
+    map_dfr(random_year, ~ x %>% 
+      filter(year %in% c(random_year, random_year + 1) ))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+ptm <- proc.time()
+
+rme_boot_2yr_block <-
+  rme_data %>% 
+    nest(re_data = installation:population) %>% 
+  mutate(boot = map(re_data, ~ boot(., rme_index_2yr_fun, 10000)),
+         tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+rme_boot_2yr_block <-
+  rme_boot_2yr_block %>% 
+    mutate(tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
+
+# In norm.inter(t, adj.alpha) : extreme order statistics used as endpoints
+
+#write_rds(rme_boot_2yr_block, path = "data/rme_boot_2yr_block.rds")
+
+
+
+```
+
+
+### All indices
+RR whisker plot and table
+
+```{r all_indices, eval = FALSE}
+ptm <- proc.time()
+
+amb_boot_2yr_block_all <-
+  ambulatory_data_full %>% 
+    nest(amb_data = installation:population) %>% 
+  mutate(boot = map(amb_data, ~ boot(., amb_index_2yr_fun, 100)),
+         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+#write_rds(amb_boot_2yr_block_all, path = "data/amb_boot_2yr_block_all.rds")
+
+
+
+ rme_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Event Rate Ratios from Annual Indices of Heat") +
+         xlab("Rate Ratio")
+         
+
+
+ggsave("rme_all.png", width = 8, height = 10.5)
+
+
+
+
+## Combined panel RR plot
+
+
+amb_boot2_long <-
+  amb_boot_2yr_block_all %>%
+    unnest(tidy) %>% 
+    filter(term %in% "value") %>% 
+    dplyr::select(index, statistic, conf.low, conf.high) %>% 
+    pivot_longer(cols = -index,
+                 names_to = "term",
+                 values_to = "value") %>% 
+    mutate(outcome = "Ambulatory")
+  
+  
+hosp_boot2_long <-
+  hosp_boot_2yr_block_all %>%
+    unnest(tidy) %>% 
+    filter(term %in% "value") %>% 
+    dplyr::select(index, statistic, conf.low, conf.high) %>% 
+    pivot_longer(cols = -index,
+                 names_to = "term",
+                 values_to = "value") %>% 
+    mutate(outcome = "Hospitalizations")  
+
+
+rme_boot2_long <-
+  rme_boot_2yr_block_all %>%
+    unnest(tidy) %>% 
+    filter(term %in% "value") %>% 
+    dplyr::select(index, statistic, conf.low, conf.high) %>% 
+    pivot_longer(cols = -index,
+                 names_to = "term",
+                 values_to = "value") %>% 
+    mutate(outcome = "Reportable Events")  
+
+
+# Join dataframes
+
+boot2_long <-
+  amb_boot2_long %>% 
+    bind_rows(hosp_boot2_long) %>% 
+    bind_rows(rme_boot2_long)
+
+
+## Full Index RR Plot - Facet
+boot2_long %>% 
+  pivot_wider(names_from = term, 
+              values_from = value) %>%
+  mutate(index = fct_reorder(index, exp(statistic))) %>% 
+  ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         facet_wrap(~outcome) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+          ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
+         xlab("Rate Ratio")
+  
+  
+## Reduced Index RR Plot - Facet
+ # remove focus indices, sd, minimum temperatures 
+  
+   
+
+boot2_long %>% 
+  pivot_wider(names_from = term, 
+              values_from = value) %>%
+  filter(!index %in% c("tmp_f_mean", "wbgt_f_mean", "heat_index_mean",
+                       "tmp_f_mean_may_sep", "wbgt_f_mean_may_sep", "heat_index_mean_may_sep",
+                       "tmp_f_sd", "wbgt_f_sd", "heat_index_sd",
+                       "tmp_f_min", "heat_index_min", "wbgt_f_min")) %>% 
+  mutate(index = fct_reorder(index, exp(statistic))) %>% 
+  ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         facet_wrap(~outcome) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+          ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
+         xlab("Rate Ratio")
+
+
+ggsave("boot2_reduced.png", width = 7.5, height = 9)
+
+
+
+
+
+# Divide by degree units and days/hours
+
+# Modify units: multiply hours by 24
+
+# Degree indices
+boot2_long %>% 
+  pivot_wider(names_from = term, 
+              values_from = value) %>%
+  filter(!index %in% c("tmp_f_mean", "wbgt_f_mean", "heat_index_mean",
+                       "tmp_f_mean_may_sep", "wbgt_f_mean_may_sep", "heat_index_mean_may_sep",
+                       "tmp_f_sd", "wbgt_f_sd", "heat_index_sd",
+                       "tmp_f_min", "heat_index_min", "wbgt_f_min"),
+         !str_detect(index, "hour"),
+         !str_detect(index, "day")) %>% 
+  mutate(index = fct_reorder(index, exp(statistic))) %>% 
+  ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         facet_wrap(~outcome) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+          #ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
+         xlab("Rate Ratio")
+
+ggsave("boot2_degrees.png", width = 8, height = 5)
+
+# Days/hour indices
+
+
+boot2_long %>%
+  mutate(value = case_when(str_detect(index, "hour")  ~ value * 24,
+                        TRUE ~ value)) %>% 
+  pivot_wider(names_from = term, 
+              values_from = value) %>%
+  filter(!index %in% c("tmp_f_mean", "wbgt_f_mean", "heat_index_mean",
+                       "tmp_f_mean_may_sep", "wbgt_f_mean_may_sep", "heat_index_mean_may_sep",
+                       "tmp_f_sd", "wbgt_f_sd", "heat_index_sd",
+                       "tmp_f_min", "heat_index_min", "wbgt_f_min"),
+                        str_detect(index, "hour|day")) %>% 
+  mutate(index = fct_reorder(index, exp(statistic))) %>% 
+  ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         facet_wrap(~outcome) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+          #ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
+         xlab("Rate Ratio")
+
+
+ggsave("boot2_days.png", width = 8, height = 5)
+
+
+# Slice top 20 ambulatory statistic
+
+# vector of top 20 ambulatory indices
+amb_top20_boot2_days <-
+  boot2_long %>%
+    mutate(value = case_when(str_detect(index, "hour")  ~ value * 24,
+                          TRUE ~ value)) %>% 
+    pivot_wider(names_from = term, 
+                values_from = value) %>%
+    filter(!index %in% c("tmp_f_mean", "wbgt_f_mean", "heat_index_mean",
+                         "tmp_f_mean_may_sep", "wbgt_f_mean_may_sep", "heat_index_mean_may_sep",
+                         "tmp_f_sd", "wbgt_f_sd", "heat_index_sd",
+                         "tmp_f_min", "heat_index_min", "wbgt_f_min"),
+                          str_detect(index, "hour|day"),
+           outcome %in% "Ambulatory") %>% 
+    dplyr::arrange(desc(statistic)) %>% 
+    dplyr::slice(1:20) %>% 
+    dplyr::select(index)
+
+
+boot2_long %>%
+  mutate(value = case_when(str_detect(index, "hour")  ~ value * 24,
+                        TRUE ~ value)) %>% 
+  pivot_wider(names_from = term, 
+              values_from = value) %>%
+  dplyr::semi_join(amb_top20_boot2_days, by = "index") %>% 
+  mutate(index = fct_reorder(index, exp(statistic))) %>% 
+  ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         facet_wrap(~outcome) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+          #ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
+         xlab("Rate Ratio")
+
+
+ggsave("boot2_days.png", width = 8, height = 5)
+
+
+
+
+
+boot2_long %>% 
+  mutate(value = case_when(str_detect(index, "hour")  ~ value * 24,
+                        TRUE ~ value)) %>% 
+  pivot_wider(names_from = term, 
+              values_from = value) %>%
+  filter(!index %in% c("tmp_f_mean", "wbgt_f_mean", "heat_index_mean",
+                       "tmp_f_sd", "wbgt_f_sd", "heat_index_sd",
+                       "tmp_f_min", "heat_index_min", "wbgt_f_min")) %>% 
+  mutate(index = fct_reorder(index, exp(statistic))) %>% 
+  ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         facet_wrap(~outcome) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+          ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
+         xlab("Rate Ratio")
+
+
+
+
+
+
+
+
+# RR Table
+amb_boot_2yr_block_all %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high) %>% 
+  mutate(rr = exp(statistic),
+         rr_low = exp(conf.low),
+         rr_high = exp(conf.high),
+         rate_ratio = paste0(round(rr, 2), " (", round(rr_low, 2), ", ", round(rr_high, 2), ")")) %>% 
+  dplyr::select(index, rate_ratio) %>% 
+  as.data.frame() %>% print()
+
+
+```
+
+# Sensitivity analysis plots
+
+
+
+```{r}
+
+a1 <-
+amb_boot_2yr_block %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Ambulatory \n 2 year block (primary analysis, 10k)") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+a2 <-
+amb_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Ambulatory \n 2 year block - Bca CIs, 10k") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+a3 <-
+amb_boot_3yr_block %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Ambulatory \n 3 year block, 10k") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+
+a4 <-
+amb_boot_std %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Ambulatory \n standard bootstrap (single year, 10k)") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+a5 <-
+amb_nb %>% 
+    unnest(nb_tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(estimate))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(estimate), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Ambulatory \n neg bin - no year term, no bootstrap") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+a6 <-
+amb_nb %>% 
+    unnest(nb_year_tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(estimate))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(estimate), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Ambulatory \n neg bin - with year term, no bootstrap") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+
+#patchwork
+(a1 + a2 + a3) / (a4 + a5 + a6)
+
+ggsave("amb_sens.png", width = 10, height = 6)
+```
+
+
+
+```{r}
+
+r1 <-
+rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Events \n 2 year block (primary analysis, 10k)") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+r2 <-
+rme_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Events \n 2 year block - Bca CIs, 10k") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+r3 <-
+rme_boot_3yr_block %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Events \n 3 year block, 10k") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+
+r4 <-
+rme_boot_std %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Events \n standard bootstrap (single year, 10k)") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+r5 <-
+rme_nb %>% 
+    unnest(nb_tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(estimate))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(estimate), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Events \n neg bin - no year term, no bootstrap") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+r6 <-
+rme_nb %>% 
+    unnest(nb_year_tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(estimate))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(estimate), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Events \n neg bin - with year term, no bootstrap") +
+         xlab("Rate Ratio") +
+         theme(plot.title = element_text(size = 8))
+
+
+#patchwork
+(r1 + r2 + r3) / (r4 + r5 + r6)
+
+ggsave("rme_sens.png", width = 10, height = 6)
+```
+
+
+
+
+
+
+### Hospitalization, all indices, 100 bootstrap
+
+```{r}
+ptm <- proc.time()
+
+hosp_boot_2yr_block_all <-
+  hospitalization_data_full %>% 
+    nest(hosp_data = installation:population) %>% 
+  mutate(boot = map(hosp_data, ~ boot(., hosp_index_2yr_fun, 100)),
+         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+#write_rds(hosp_boot_2yr_block_all, path = "data/hosp_boot_2yr_block_all.rds")
+
+
+
+hosp_boot_2yr_block_all %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Hospitalization Rate Ratio, Bootstrap, 2 year block, 100 iterations")
+
+
+hosp_boot_2yr_block_all %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high) %>% 
+  mutate(rr = exp(statistic),
+         rr_low = exp(conf.low),
+         rr_high = exp(conf.high),
+         rate_ratio = paste0(round(rr, 2), " (", round(rr_low, 2), ", ", round(rr_high, 2), ")")) %>% 
+  dplyr::select(index, rate_ratio) %>% 
+  as.data.frame() %>% print()
+```
+
+
+
+```{r}
+
+
+ptm <- proc.time()
+
+rme_boot_2yr_block_all <-
+  rme_data_full %>% 
+    nest(rme_data = installation:population) %>% 
+  mutate(boot = map(rme_data, ~ boot(., rme_index_2yr_fun, 100)),
+         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+#write_rds(rme_boot_2yr_block_all, path = "data/rme_boot_2yr_block_all.rds")
+
+
+rme_boot2_all_plot <-
+  rme_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75))) +
+         ggtitle("Reportable Event Rate Ratio, Bootstrap, 2 year block, 100 iterations")
+
+# Limit x axis (RR) to 2.5
+  rme_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+        filter(term %in% "value") %>%
+    mutate(index = fct_reorder(index, exp(statistic))) %>% 
+   ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         coord_cartesian(xlim = c(0.75, 2.0)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         ggtitle("Reportable Events") +
+         xlab("Rate Ratio")
+         
+
+
+#ggsave("rme_all.png", width = 8, height = 10.5)
+
+
+rme_boot_2yr_block_all %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high) %>% 
+  mutate(rr = exp(statistic),
+         rr_low = exp(conf.low),
+         rr_high = exp(conf.high),
+         rate_ratio = paste0(round(rr, 2), " (", round(rr_low, 2), ", ", round(rr_high, 2), ")")) %>% 
+  dplyr::select(index, rate_ratio) %>% 
+  as.data.frame() %>% print()
+```
+
+
+
+### Bootstrap 2 year block plots
+
+```{r}
+amb_boot_2yr_block %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Ambulatory Rate Ratio, Bootstrap, 2 year block, 10,000 iterations")
+
+
+hosp_boot_2yr_block %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Hospitalization Rate Ratio, Bootstrap, 2 year block, 10,000 iterations")
+
+rme_boot_2yr_block %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Reportable Event Rate Ratio, Bootstrap, 2 year block, 10,000 iterations")
+
+```
+
+
+
+
+
+
+
+## Bootstrap 3 year blocks
+
+
+```{r amb_boot_3yr, eval = FALSE}
+
+# 20 year timeframe (1998-2018: stitch 6 replicates of 3 year blocks
+
+amb_index_3yr_fun <- function(x, i) {
+  # Select random start year
+  random_year <- replicate(6, sample(amb_min_yr:(amb_max_yr - 2), size = 1, replace = TRUE))
+  # select the observations to subset. 
+  block_obs <- 
+    map_dfr(random_year, ~ x %>% 
+      filter(year %in% c(random_year, random_year + 1, random_year + 2) ))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+ptm <- proc.time()
+
+plan(multiprocess)
+
+amb_boot_3yr_block <-
+  ambulatory_data %>% 
+    nest(amb_data = installation:population) %>% 
+  mutate(boot = future_map(amb_data, ~ boot(., amb_index_3yr_fun, 10000)),
+         tidy = future_map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+write_rds(amb_boot_3yr_block, path = "data/amb_boot_3yr_block.rds")
+
+```
+
+
+
+```{r hosp_boot_3yr, eval = FALSE}
+
+hosp_index_3yr_fun <- function(x, i) {
+  # Select random start year
+  random_year <- replicate(9, sample(hosp_min_yr:(hosp_max_yr - 2), size = 1, replace = TRUE))
+  # select the observations to subset. 
+  block_obs <- 
+    map_dfr(random_year, ~ x %>% 
+      filter(year %in% c(random_year, random_year + 1, random_year + 2) ))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+ptm <- proc.time()
+
+hosp_boot_3yr_block <-
+  hospitalization_data %>% 
+    nest(hosp_data = installation:population) %>% 
+  mutate(boot = future_map(hosp_data, ~ boot(., hosp_index_3yr_fun, 10000)))
+
+proc.time() - ptm
+
+
+
+
+
+
+write_rds(hosp_boot_3yr_block, path = "data/hosp_boot_3yr_block.rds")
+
+hosp_boot_3yr_block <-
+  hosp_boot_3yr_block %>% 
+    mutate(tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")),
+           tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
+
+# BCa CI warnings (34):  In norm.inter(t, adj.alpha) : extreme order statistics used as endpoints
+
+```
+
+```{r  rme_boot_3yr, eval = FALSE}
+
+rme_index_3yr_fun <- function(x, i) {
+  # Select random start year
+  random_year <- replicate(7, sample(rme_min_yr:(rme_max_yr - 2), size = 1, replace = TRUE))
+  # select the observations to subset. 
+  block_obs <- 
+    map_dfr(random_year, ~ x %>% 
+      filter(year %in% c(random_year, random_year + 1, random_year + 2) ))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+ptm <- proc.time()
+
+rme_boot_3yr_block <-
+  rme_data %>% 
+    nest(re_data = installation:population) %>% 
+  mutate(boot = future_map(re_data, ~ boot(., rme_index_3yr_fun, 10000)))
+
+rme_boot_3yr_block <-
+  rme_boot_3yr_block %>% 
+    mutate(tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+write_rds(rme_boot_3yr_block, path = "data/rme_boot_3yr_block.rds")
+
+
+
+```
+
+
+## Bootstrap - original (draw single observations)
+
+```{r boot_single, eval = FALSE}
+
+std_boot <- function(D, d){
+	E = D[d,]
+	return(coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = E)))
+	
+}
+
+amb_boot_std <-
+  ambulatory_data %>%
+    nest(amb_data = installation:population) %>% 
+    mutate(std_boot = map(amb_data, ~ boot(., std_boot, R = 10000)),          tidy = map(std_boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+
+hosp_boot_std <-
+  hospitalization_data %>%
+    nest(hosp_data = installation:population) %>% 
+    mutate(hosp_boot = map(hosp_data, ~ boot(., std_boot, R = 10000)))
+
+hosp_boot_std <-
+  hosp_boot_std %>%            
+    mutate(tidy = map(hosp_boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+
+rme_boot_std <-
+  rme_data %>%
+    nest(re_data = installation:population) %>% 
+    mutate(rme_boot = map(re_data, ~ boot(., std_boot, R = 10000)))
+
+rme_boot_std <-
+  rme_boot_std %>%            
+    mutate(tidy = map(rme_boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+
+#write_rds(amb_boot_std, path = "data/amb_boot_std.rds")
+#write_rds(hosp_boot_std, path = "data/hosp_boot_std.rds")
+#write_rds(rme_boot_std, path = "data/rme_boot_std.rds")
+
+```
+
+
+
+
+
+### Bootstrap 3 year block plots
+
+```{r}
+amb_boot_3yr_block %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Ambulatory Rate Ratio, Bootstrap, 3 year block, 10,000 iterations")
+
+
+hosp_boot_3yr_block %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Hospitalization Rate Ratio, Bootstrap, 3 year block, 10,000 iterations")
+
+
+
+
+
+
+rme_boot_3yr_block %>% 
+  unnest(tidy) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Reportable Event Rate Ratio, Bootstrap, 3 year block, 10,000 iterations")
+
+```
+
+### Bootstrap 2 year block plots - BCa CI
+
+```{r two_yr_bca, eval = FALSE}
+
+# Hosp with BCa CI
+hosp_boot_2yr_block %>% 
+  unnest(tidy_bca) %>%
+    filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), color = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Hospitalization Rate Ratio, Bootstrap, 2 year block, 10,000 iterations")
+
+
+
+hosp_boot_2yr_block %>% 
+  unnest(tidy_bca) %>%
+    filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), color = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Hospitalization Rate Ratio, Bootstrap, 2 year block, 10,000 iterations")
+
+
+
+rme_boot_2yr_block %>% 
+  unnest(tidy_bca) %>%
+      filter(term %in% "value") %>%
+ ggplot() +
+      geom_point(aes(x = exp(statistic), y = index)) +
+      geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       theme_bw() +
+       theme(axis.text.y = element_text(size = rel(0.75))) +
+       ggtitle("Reportable Event Rate Ratio, Bootstrap, 2 year block, 10,000 iterations")
+
+```
+
+
+
+
+## Grouped CI plots
+
+```{r}
+
+
+amb_grouped <-
+  amb_nb %>% 
+    unnest(nb_tidy) %>%
+      filter(term %in% "value") %>% 
+    dplyr::select(index, estimate, conf.low, conf.high) %>%
+    mutate(model = "nb_no_yr",
+           bias = as.numeric("NA")) %>%
+    rename(statistic = estimate) %>% 
+  bind_rows(
+    amb_nb %>% 
+      unnest(nb_year_tidy) %>%
+        filter(term %in% "value") %>% 
+    dplyr::select(index, estimate, conf.low, conf.high) %>%
+    mutate(model = "nb_yr",
+           bias = as.numeric("NA")) %>%
+    rename(statistic = estimate)
+    ) %>%
+    bind_rows(  
+    amb_boot_std %>% 
+        unnest(tidy) %>%
+          filter(term %in% "value") %>% 
+          mutate(model = "boot") %>% 
+      dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+    ) %>% 
+  bind_rows(  
+    amb_boot_2yr_block %>% 
+      unnest(tidy) %>%
+        filter(term %in% "value") %>% 
+        mutate(model = "boot2yr_basic") %>% 
+    dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+    ) %>% 
+  bind_rows(
+   amb_boot_3yr_block %>% 
+    unnest(tidy) %>%
+      filter(term %in% "value") %>% 
+      mutate(model = "boot3yr_basic") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+
+)
+
+
+
+hosp_grouped <-
+  hosp_nb %>% 
+    unnest(nb_tidy) %>%
+      filter(term %in% "value") %>% 
+    dplyr::select(index, estimate, conf.low, conf.high) %>%
+    mutate(model = "nb_no_yr",
+           bias = as.numeric("NA")) %>%
+    rename(statistic = estimate) %>% 
+  bind_rows(
+    hosp_nb %>% 
+      unnest(nb_year_tidy) %>%
+        filter(term %in% "value") %>% 
+    dplyr::select(index, estimate, conf.low, conf.high) %>%
+    mutate(model = "nb_yr",
+           bias = as.numeric("NA")) %>%
+    rename(statistic = estimate)
+    ) %>%
+    bind_rows(  
+    hosp_boot_std %>% 
+        unnest(tidy) %>%
+          filter(term %in% "value") %>% 
+          mutate(model = "boot") %>% 
+      dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+    ) %>% 
+  bind_rows(  
+    hosp_boot_2yr_block %>% 
+      unnest(tidy) %>%
+        filter(term %in% "value") %>% 
+        mutate(model = "boot2yr_basic") %>% 
+    dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+    ) %>% 
+  bind_rows(
+    hosp_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+      filter(term %in% "value") %>% 
+      mutate(model = "boot2yr_bca") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+) %>% 
+  bind_rows(
+   hosp_boot_3yr_block %>% 
+    unnest(tidy) %>%
+      filter(term %in% "value") %>% 
+      mutate(model = "boot3yr_basic") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+  ) %>% 
+  bind_rows(
+    hosp_boot_3yr_block %>% 
+    unnest(tidy_bca) %>%
+      filter(term %in% "value") %>% 
+      mutate(model = "boot3yr_bca") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+)
+
+
+
+
+rme_grouped <-
+  rme_nb %>% 
+    unnest(nb_tidy) %>%
+      filter(term %in% "value") %>% 
+    dplyr::select(index, estimate, conf.low, conf.high) %>%
+    mutate(model = "nb_no_yr",
+           bias = as.numeric("NA")) %>%
+    rename(statistic = estimate) %>% 
+  bind_rows(
+    rme_nb %>% 
+      unnest(nb_year_tidy) %>%
+        filter(term %in% "value") %>% 
+    dplyr::select(index, estimate, conf.low, conf.high) %>%
+    mutate(model = "nb_yr",
+           bias = as.numeric("NA")) %>%
+    rename(statistic = estimate)
+    ) %>%
+    bind_rows(  
+    rme_boot_std %>% 
+        unnest(tidy) %>%
+          filter(term %in% "value") %>% 
+          mutate(model = "boot") %>% 
+      dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+    ) %>% 
+  bind_rows(  
+    rme_boot_2yr_block %>% 
+      unnest(tidy) %>%
+        filter(term %in% "value") %>% 
+        mutate(model = "boot2yr_basic") %>% 
+    dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+    ) %>% 
+  bind_rows(
+   rme_boot_3yr_block %>% 
+    unnest(tidy) %>%
+      filter(term %in% "value") %>% 
+      mutate(model = "boot3yr_basic") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+)
+
+
+
+# Plot
+# 
+
+amb_grouped %>%
+#filter(!model %in% c("nb_no_yr", "boot2yr_bca", "boot3yr_bca")) %>% 
+  ggplot(aes(fill = model, x = index)) +
+        geom_point(aes(y = exp(statistic)), position = position_dodge(0.5)) +
+        geom_point(aes(y = exp(statistic + bias)), shape = 4, position = position_dodge(0.5)) +
+        geom_errorbar(
+          aes(ymin = exp(conf.low),
+              ymax = exp(conf.high),
+          color = model),
+              position = position_dodge(0.5)) +
+         coord_flip() +
+         geom_hline(aes(yintercept = 1), color = "blue") +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75))) +
+         ggtitle("Ambulatory Rate Ratios")
+
+
+
+
+
+hosp_grouped %>%
+#filter(!model %in% c("nb_no_yr", "boot2yr_bca", "boot3yr_bca")) %>% 
+  ggplot(aes(fill = model, x = index)) +
+        geom_point(aes(y = exp(statistic)), position = position_dodge(0.5)) +
+        geom_point(aes(y = exp(statistic + bias)), shape = 4, position = position_dodge(0.5)) +
+        geom_errorbar(
+          aes(ymin = exp(conf.low),
+              ymax = exp(conf.high),
+          color = model),
+              position = position_dodge(0.5)) +
+         coord_flip() +
+         geom_hline(aes(yintercept = 1), color = "blue") +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75))) +
+         ggtitle("Hospitalization Rate Ratios")
+
+rme_grouped %>% 
+#filter(!model %in% c("nb_no_yr", "boot2yr_bca", "boot3yr_bca")) %>% 
+  ggplot(aes(fill = model, x = index)) +
+        geom_point(aes(y = exp(statistic)), position = position_dodge(0.5)) +
+        geom_point(aes(y = exp(statistic + bias)), shape = 4, position = position_dodge(0.5)) +
+        geom_errorbar(
+          aes(ymin = exp(conf.low),
+              ymax = exp(conf.high),
+          color = model),
+              position = position_dodge(0.5)) +
+         coord_flip() +
+         geom_hline(aes(yintercept = 1), color = "blue") +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75))) +
+         ggtitle("Reportable Event Rate Ratios")
+
+
+
+```
+
+
+
+## Select Plots
+
+```{r}
+rme_grouped %>% 
+  filter(!model %in% c("boot3yr_basic", "boot2yr_bca", "boot3yr_bca"),
+         index %in% c("tmp_mean_may_sep", "heat_index_mean_may_sep", "wbgt_f_mean_may_sep")) %>% 
+    ggplot(aes(fill = model, x = index)) +
+          geom_point(aes(y = exp(statistic)), position = position_dodge(0.75)) +
+          geom_point(aes(y = exp(statistic + bias)), shape = 4, position = position_dodge(0.75)) +
+          geom_errorbar(
+            aes(ymin = exp(conf.low),
+                ymax = exp(conf.high),
+            color = model),
+                position = position_dodge(0.75)) +
+           coord_flip() +
+           geom_hline(aes(yintercept = 1), color = "blue") +
+           theme_bw() +
+           theme(axis.text.y = element_text(size = rel(0.75))) +
+           ggtitle("Reportable Event Rate Ratios")
+
+
+
+# wbgt, RME 2 yr block boot histogram
+plot(rme_boot_2yr_block[6,3][[1]][[1]], index = 2)
+
+
+
+as.data.frame(rme_boot_2yr_block[6,3][[1]][[1]]$t)
+
+
+## RR, May-Sep temp, 2 yr boot histogram
+ggplot() + 
+  geom_histogram(data = exp(as.data.frame(rme_boot_2yr_block[4,3][[1]][[1]]$t)), aes(V2), bins = 200) +
+  geom_vline(xintercept = exp(rme_boot_2yr_block[4,4][[1]][[1]][2,5] %>% pull()), color = "blue") +
+  geom_vline(xintercept = exp(rme_boot_2yr_block[4,4][[1]][[1]][2,6] %>% pull()), color = "blue") +
+  ggtitle("Reportable Events, Warm-Season Temp (deg F) \n 2 year block bootstrap") +
+  xlab("Risk Ratio") +
+  theme_bw()
+
+## RR, May-Sep HI, 2 yr boot histogram
+ggplot() + 
+  geom_histogram(data = exp(as.data.frame(rme_boot_2yr_block[5,3][[1]][[1]]$t)), aes(V2), bins = 200) +
+  geom_vline(xintercept = exp(rme_boot_2yr_block[5,4][[1]][[1]][2,5] %>% pull()), color = "blue") +
+  geom_vline(xintercept = exp(rme_boot_2yr_block[5,4][[1]][[1]][2,6] %>% pull()), color = "blue") +
+  ggtitle("Reportable Events, Warm-Season HI (deg F) \n 2 year block bootstrap") +
+  xlab("Risk Ratio") +
+  theme_bw()
+
+## RR, May-Sep WBGT, 2 yr boot histogram
+ggplot() + 
+  geom_histogram(data = exp(as.data.frame(rme_boot_2yr_block[6,3][[1]][[1]]$t)), aes(V2), bins = 200) +
+  geom_vline(xintercept = exp(rme_boot_2yr_block[6,4][[1]][[1]][2,5] %>% pull()), color = "blue") +
+  geom_vline(xintercept = exp(rme_boot_2yr_block[6,4][[1]][[1]][2,6] %>% pull()), color = "blue") +
+  ggtitle("Reportable Events, Warm-Season WBGT \n 2 year block bootstrap") +
+  xlab("Risk Ratio") +
+  theme_bw()
+  
+  
+
+```
+
+
+### Bca CI histograms
+```{r}
+
+## RR, May-Sep temp, 2 yr boot histogram
+ggplot() + 
+  geom_histogram(data = exp(as.data.frame(hosp_boot_2yr_block[4,3][[1]][[1]]$t)), aes(V2), bins = 200) +
+  geom_vline(xintercept = exp(hosp_boot_2yr_block[4,5][[1]][[1]][2,5] %>% pull()), color = "blue") +
+  geom_vline(xintercept = exp(hosp_boot_2yr_block[4,5][[1]][[1]][2,6] %>% pull()), color = "blue") +
+  ggtitle("Hospitalization, Warm-Season Temp (deg F) \n 2 year block bootstrap, Bca CI") +
+  xlab("Risk Ratio") +
+  theme_bw()
+
+
+ggplot() + 
+  geom_histogram(data = exp(as.data.frame(hosp_boot_2yr_block[4,3][[1]][[1]]$t)), aes(V2), bins = 200) +
+  geom_vline(xintercept = exp(hosp_boot_2yr_block[4,4][[1]][[1]][2,5] %>% pull()), color = "blue") +
+  geom_vline(xintercept = exp(hosp_boot_2yr_block[4,4][[1]][[1]][2,6] %>% pull()), color = "blue") +
+  geom_vline(xintercept = exp(hosp_boot_2yr_block[4,4][[1]][[1]][2,2] %>% pull())) +
+  geom_vline(xintercept = exp(
+    (hosp_boot_2yr_block[4,4][[1]][[1]][2,2] %>% pull()) +
+      hosp_boot_2yr_block[4,4][[1]][[1]][2,3] %>% pull()), linetype = "dashed") +
+  ggtitle("Hospitalization, Warm-Season Temp (deg F) \n 2 year block bootstrap, Basic/Empirical CI") +
+  xlab("Risk Ratio") +
+  theme_bw()
+
+```
+
+
+# Autocorrelations
+```{r}
+
+# ACF of mean count per year across selected installations
+# Ambulatory ACF
+ambulatory_data %>%
+  group_by(year) %>%
+  summarise(mean_count = mean(count)) %>%
+  pull(mean_count) %>% 
+  acf()
+
+# Hospitalization ACF
+hospitalization_data %>%
+  group_by(year) %>%
+  summarise(mean_count = mean(count)) %>%
+  pull(mean_count) %>% 
+  acf()
+
+# Reportable Events ACF
+rme_data %>%
+  group_by(year) %>%
+  summarise(mean_count = mean(count)) %>%
+  pull(mean_count) %>% 
+  acf()
+```
+
+
+## Model Output Tables
+
+```{r}
+# RME model table - full year
+
+rme_boot_2yr_block %>% 
+  unnest(tidy) %>%
+      filter(!str_detect(index, "days"),
+             !str_detect(index, "may")) %>%
+  mutate(coefficient = paste0(round(exp(statistic), 2)," ", "(", 
+                              round(exp(conf.low), 2), ", ",
+                              round(exp(conf.high), 2),
+                              ")")) %>% 
+  dplyr::select(index, term, coefficient) %>% 
+  pivot_wider(names_from = index  , values_from = coefficient)
+  
+
+
+
+
+
+
+
+
+# RME model table - heat season
+
+rme_boot_2yr_block %>% 
+  unnest(tidy) %>%
+      filter(!str_detect(index, "days"),
+             str_detect(index, "may")) %>%
+  mutate(coefficient = paste0(round(exp(statistic), 2)," ", "(", 
+                              round(exp(conf.low), 2), ", ",
+                              round(exp(conf.high), 2),
+                              ")")) %>% 
+  dplyr::select(index, term, coefficient) %>% 
+  pivot_wider(names_from = index  , values_from = coefficient)
+
+```
+
+## Plots for Manuscript
+
+```{r}
+
+
+# Full Year
+
+full_yr_df <-
+   amb_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Ambulatory") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Hospitalizations") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Reportable Events") %>% 
+    dplyr::select(-re_data)
+  ) %>%
+    dplyr::select(index, term:type) %>% 
+    filter(term %in% "value",
+          !str_detect(index, "days"),
+          !str_detect(index, "may")) %>%
+    mutate(index = forcats::fct_rev(dplyr::recode_factor(index, tmp_f_mean = "Temp", heat_index_mean = "HI", wbgt_f_mean = "WBGT"))) 
+
+
+
+
+plot_full <-
+  full_yr_df %>% 
+     ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        #geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         facet_wrap(vars(type)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         xlab("Rate Ratio") +
+         ggtitle("Full Year (Jan-Dec)")
+
+
+# Heat Season
+
+heat_season_df <-
+  amb_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Ambulatory") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Hospitalizations") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Reportable Events") %>% 
+    dplyr::select(-re_data)
+  ) %>%
+    dplyr::select(index, term:type) %>% 
+    filter(term %in% "value",
+          !str_detect(index, "days"),
+           str_detect(index, "may")) %>%
+    mutate(index = forcats::fct_rev(dplyr::recode_factor(index, tmp_mean_may_sep = "Temp", heat_index_mean_may_sep = "HI", wbgt_f_mean_may_sep = "WBGT")))
+  
+  
+plot_heat <-
+  heat_season_df %>% 
+     ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        #geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         facet_wrap(vars(type)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         xlab("Rate Ratio") +
+         ggtitle("Heat Season (May-Sept)") 
+
+
+# Assemble plots to single figure using `patchwork`
+
+plot_full / plot_heat
+
+ggsave("rr_plots.png")
+```
+
+
+```{r plot_no_bias}
+
+plot_full <-
+  full_yr_df %>% 
+     ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         facet_wrap(vars(type)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         xlab("Rate Ratio") +
+         ggtitle("Full Year")
+
+
+plot_heat <-
+  heat_season_df %>% 
+     ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         facet_wrap(vars(type)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         xlab("Rate Ratio") +
+         ggtitle("Heat Season (May-Sept)") 
+
+
+# Assemble plots to single figure using `patchwork`
+
+plot_full + plot_heat
+plot_full / plot_heat
+
+
+```
+
+
+
+## Bca CI plots
+
+```{r}
+
+
+# Full Year
+
+full_yr_bca_df <-
+   amb_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+    mutate(type = "Out-patient") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+    mutate(type = "In-patient") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+    mutate(type = "Reportable") %>% 
+    dplyr::select(-re_data)
+  ) %>%
+    dplyr::select(index, term:type) %>% 
+    filter(term %in% "value",
+          !str_detect(index, "days"),
+          !str_detect(index, "may")) %>%
+    mutate(index = forcats::fct_rev(dplyr::recode_factor(index, tmp_f_mean = "Temp", heat_index_mean = "HI", wbgt_f_mean = "WBGT"))) 
+
+
+
+
+plot_full_bca <-
+  full_yr_bca_df %>% 
+     ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         facet_wrap(vars(type)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         xlab("Rate Ratio") +
+         ggtitle("Full Year")
+
+
+# Heat Season
+
+heat_season_bca_df <-
+  amb_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+    mutate(type = "Out-patient") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+    mutate(type = "In-patient") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+    mutate(type = "Reportable") %>% 
+    dplyr::select(-re_data)
+  ) %>%
+    dplyr::select(index, term:type) %>% 
+    filter(term %in% "value",
+          !str_detect(index, "days"),
+           str_detect(index, "may")) %>%
+    mutate(index = forcats::fct_rev(dplyr::recode_factor(index, tmp_mean_may_sep = "Temp", heat_index_mean_may_sep = "HI", wbgt_f_mean_may_sep = "WBGT")))
+  
+  
+plot_heat_bca <-
+  heat_season_bca_df %>% 
+     ggplot() +
+        geom_point(aes(x = exp(statistic), y = index)) +
+        geom_point(aes(x = exp(statistic + bias), y = index), color = "red", shape = 4) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         facet_wrap(vars(type)) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         xlab("Rate Ratio") +
+         ggtitle("Heat Season (May-Sept)") 
+
+
+# Assemble plots to single figure using `patchwork`
+
+plot_full_bca / plot_heat_bca
+
+```
+
+## Full results
+
+```{r}
+# Empirical CI
+
+amb_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Out-patient") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "In-patient") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Reportable") %>% 
+    dplyr::select(-re_data)
+  ) %>%
+    dplyr::select(index, term:type) %>% 
+    filter(!str_detect(index, "days")) %>%
+  dplyr::select(index, type, term, statistic, conf.low, conf.high) %>% 
+  group_by(index, type) %>% 
+  group_split()
+
+
+
+
+# Heat season, mean temp, reportable event
+rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Reportable") %>% 
+    filter(index %in% "tmp_mean_may_sep") %>%
+  dplyr::select(term, statistic, conf.low, conf.high) %>%
+  mutate(term = dplyr::recode(term, installationfort_bliss   = "Fort Bliss",
+                              installationfort_bragg   = "Fort Bragg",
+                              installationfort_campbell   = "Fort Campbell",
+                              installationfort_hood   = "Fort Hood",
+                              installationfort_jackson   = "Fort Jackson",
+                              installationfort_leonard_wood = "Fort Leonard Wood",
+                              installationfort_polk   = "Fort Polk",
+                              installationfort_riley   = "Fort Riley",
+                              installationfort_stewart   = "Fort Stewart"),
+         coefficient = paste0(round(statistic, 2)," ", "(", round(conf.low, 2), 
+                              ", ", round(conf.high, 2), ")")) %>%
+  dplyr::select(term, coefficient)
+
+# rme, heat index, heat
+rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Reportable") %>% 
+    filter(index %in% "heat_index_mean_may_sep") %>%
+  dplyr::select(term, statistic, conf.low, conf.high) %>%
+  mutate(term = dplyr::recode(term, installationfort_bliss   = "Fort Bliss",
+                              installationfort_bragg   = "Fort Bragg",
+                              installationfort_campbell   = "Fort Campbell",
+                              installationfort_hood   = "Fort Hood",
+                              installationfort_jackson   = "Fort Jackson",
+                              installationfort_leonard_wood = "Fort Leonard Wood",
+                              installationfort_polk   = "Fort Polk",
+                              installationfort_riley   = "Fort Riley",
+                              installationfort_stewart   = "Fort Stewart"),
+         coefficient = paste0(round(statistic, 2)," ", "(", round(conf.low, 2), 
+                              ", ", round(conf.high, 2), ")")) %>%
+  dplyr::select(term, coefficient)  
+
+
+# rme, wbgt, heat
+
+rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Reportable") %>% 
+    filter(index %in% "wbgt_f_mean_may_sep") %>%
+  dplyr::select(term, statistic, conf.low, conf.high) %>%
+  mutate(term = dplyr::recode(term, installationfort_bliss   = "Fort Bliss",
+                              installationfort_bragg   = "Fort Bragg",
+                              installationfort_campbell   = "Fort Campbell",
+                              installationfort_hood   = "Fort Hood",
+                              installationfort_jackson   = "Fort Jackson",
+                              installationfort_leonard_wood = "Fort Leonard Wood",
+                              installationfort_polk   = "Fort Polk",
+                              installationfort_riley   = "Fort Riley",
+                              installationfort_stewart   = "Fort Stewart"),
+         coefficient = paste0(round(statistic, 2)," ", "(", round(conf.low, 2), 
+                              ", ", round(conf.high, 2), ")")) %>%
+  dplyr::select(term, coefficient)  
+
+```
+
+
+```{r}
+rme_boot_2yr_block %>% 
+  filter(index %in% "tmp_mean_may_sep") %>% 
+  unnest(re_data) %>% 
+  mutate(rate = count/population) %>% 
+  dplyr::rename(mean_temp = value) %>% 
+  dplyr::select(installation, year, mean_temp, rate) %>% 
+  mutate(installation = dplyr::recode(installation, 
+                fort_benning_ga = "Fort Benning",
+                fort_bliss = "Fort Bliss",
+                fort_bragg = "Fort Bragg",
+                fort_campbell = "Fort Campbell",
+                fort_hood = "Fort Hood",
+                fort_jackson = "Fort Jackson",
+                fort_leonard_wood = "Fort Leonard Wood",
+                fort_polk = "Fort Polk",
+                fort_riley = "Fort Riley",
+                fort_stewart = "Fort Stewart")) %>% 
+    ggplot(aes(x = mean_temp, y = rate, color = installation, shape = installation)) +
+        geom_point(size = 3) +
+        geom_smooth(method = "lm", alpha = 0, size = 1.2) +
+       geom_smooth(method = "lm", aes(group = 1), color = "black", se = FALSE, size = 0.5) +
+        scale_shape_manual(values = 0:10) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(1)),
+               axis.text.x = element_text(size = rel(1)),
+               legend.position = "bottom", 
+               legend.margin = margin(),
+               legend.title = element_blank()) +
+         guides(shape = guide_legend(nrow = 3)) +
+         scale_y_continuous(limit = c(0, 0.035),oob = squish) +
+         xlab("Mean temperature (May-Sept,°F)") +
+         ylab("HSI Reportable Event Rate \n (per 1,000/year)") 
+
+ggsave("hsi_re_mean_tmp_summer.png")
+
+
+
+amb_boot_2yr_block %>% 
+  filter(index %in% "tmp_mean_may_sep") %>% 
+  unnest(amb_data) %>% 
+  mutate(rate = count/population) %>% 
+  dplyr::rename(mean_temp = value) %>% 
+  dplyr::select(installation, year, mean_temp, rate) %>% 
+  ggplot(aes(x = mean_temp, y = rate, color = installation, shape = installation)) +
+        geom_point() +
+        geom_smooth(method = "lm", alpha = 0.2) +
+        scale_shape_manual(values = 0:10) +
+         theme_bw() +
+         theme(axis.text.y = element_text(size = rel(0.75))) +
+         xlab("Mean temperature (May-Sept,°F)") +
+         ylab("HSI Out-patient Rate (per 1,000/year)") 
+```
+
+## Outcome trends
+```{r}
+
+# By installation - outcome type
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean") %>% 
+  dplyr::select(installation, type, year, rate) %>% 
+  dplyr::group_by(installation, type) %>% 
+  dplyr::group_modify(~ broom::tidy(lm(rate ~ year, data = .x))) %>% 
+  filter(term %in% "year")
+
+# p < 0.05
+
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean") %>% 
+  dplyr::select(installation, type, year, rate) %>% 
+  dplyr::group_by(installation, type) %>% 
+  dplyr::group_modify(~ broom::tidy(lm(rate ~ year, data = .x))) %>% 
+  filter(term %in% "year",
+         p.value < 0.05)
+
+
+# Overall outcome trends (combined installations)
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean") %>% 
+  dplyr::select(installation, type, year, count, population) %>%
+  dplyr::group_by(type, year) %>%
+  dplyr::summarise(combined_rate = sum(count) / sum(population)) %>%  dplyr::group_modify(~ broom::tidy(lm(combined_rate ~ year, data = .x))) %>% 
+  filter(term %in% "year")
+
+## Facet Combined Rate Plot
+
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean") %>% 
+  dplyr::select(installation, type, year, count, population) %>%
+  dplyr::group_by(type, year) %>%
+  dplyr::summarise(combined_rate = (sum(count) / sum(population)) * 1000) %>%
+  ungroup() %>% 
+  mutate(type = dplyr::recode(type,
+                              `Ambulatory Data` = "Ambulatory")) %>%
+  ggplot(aes(x = year, y = combined_rate)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  facet_wrap(vars(type)) +
+  ylab("Combined Rate \n (per 1,000/year)") +
+  xlab(NULL) +
+  theme_bw()
+
+## Free y scales
+
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean") %>% 
+  dplyr::select(installation, type, year, count, population) %>%
+  dplyr::group_by(type, year) %>%
+  dplyr::summarise(combined_rate = (sum(count) / sum(population)) * 1000) %>%
+  ungroup() %>% 
+  mutate(type = dplyr::recode(type,
+                              `Ambulatory Data` = "Ambulatory")) %>%
+  ggplot(aes(x = year, y = combined_rate)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  facet_wrap(vars(type), scales = "free_y") +
+  ylab("Combined HSI Rate \n (per 1,000/year)") +
+  xlab(NULL) +
+  theme_bw()
+
+ggsave("HSI_rates.png")
+# Create new dataset for individual installations
+
+hsi_df <-
+  hsi_data %>% 
+    filter(index %in% "tmp_f_mean") %>% 
+    dplyr::select(installation, type, year, count, rate, population) %>% 
+  mutate(type = dplyr::recode(type,
+                              `Ambulatory Data` = "Ambulatory"))
+
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean") %>% 
+  dplyr::select(installation, type, year, count, population) %>%
+  dplyr::group_by(type, year) %>%
+  dplyr::summarise(combined_rate = (sum(count) / sum(population)) * 1000) %>%
+  ungroup() %>% 
+  mutate(type = dplyr::recode(type,
+                              `Ambulatory Data` = "Ambulatory")) %>%
+  ggplot(aes(x = year, y = combined_rate)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  geom_line(data = hsi_df, aes(x = year, y = rate, group = installation), color = "gray", alpha = 0.6) +
+  geom_boxplot(data = hsi_df, aes(y = rate, group = year), color = "darkgreen", alpha = 0.6) +
+  facet_wrap(vars(type), scales = "free_y") +
+  ylab("HSI Rate \n (per 1,000/year)") +
+  xlab(NULL) +
+  theme_bw()
+
+
+
+
+# No facets
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean") %>% 
+  dplyr::select(installation, type, year, count, population) %>%
+  dplyr::group_by(type, year) %>%
+  dplyr::summarise(combined_rate = (sum(count) / sum(population)) * 1000) %>%
+  ungroup() %>% 
+  mutate(type = dplyr::recode(type,
+                              `Ambulatory Data` = "Ambulatory")) %>%
+  ggplot(aes(x = year, y = combined_rate, color = type, shape = type)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  ylab("Combined Rate \n (per 1,000/year)") +
+  xlab(NULL) +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  theme(legend.title = element_blank())
+
+## Hospitalization only
+
+hsi_data %>% 
+  filter(index %in% "tmp_f_mean",
+         type %in% "Hospitalizations") %>% 
+  dplyr::select(installation, type, year, count, population) %>%
+  dplyr::group_by(type, year) %>%
+  dplyr::summarise(combined_rate = (sum(count) / sum(population)) * 1000) %>%
+  ungroup() %>% 
+  mutate(type = dplyr::recode(type,
+                              `Ambulatory Data` = "Ambulatory")) %>%
+  ggplot(aes(x = year, y = combined_rate)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "#00BA3A") +
+  ylab("Combined Rate \n (per 1,000/year)") +
+  xlab(NULL) +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  theme(legend.title = element_blank())
+
+```
+
+
+
+```{r eval = FALSE }
+amb_index_2yr_fun <- function(x, i) {
+  # Select random start year
+  random_year <- replicate(10, sample(amb_min_yr:(amb_max_yr - 1), size = 1, replace = TRUE))
+  # select the observations to subset. 
+  block_obs <- 
+    map_dfr(random_year, ~ x %>% 
+      filter(year %in% c(random_year, random_year + 1) ))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+
+ptm <- proc.time()
+
+amb_boot_2yr_block_full <-
+  ambulatory_data_full %>% 
+    nest(amb_data = installation:population) %>% 
+  mutate(boot = map(amb_data, ~ boot(., amb_index_2yr_fun, 10000)),
+         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+
+proc.time() - ptm
+
+write_rds(amb_boot_2yr_block_full, "data/amb_boot_2yr_block_full")
+```
+
