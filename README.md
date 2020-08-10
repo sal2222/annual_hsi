@@ -2,7 +2,7 @@
 
 Repository contains used for HSI annual outcome anaysis.
 
-Initial data preparation code is available under the `heat_stress` repo.
+Initial data preparation code is available under the [`heat_stress`](https://github.com/sal2222/heat_stress)  repo.
 
 
 ## annual_summary
@@ -25,7 +25,7 @@ Models run for full range of indices with 100 resamples.
   - 3 year block
   - standard (1 year)
   
- - Non-bootstrap negative binomial models
+ - Non-bootstrap negative binomial models:
   - with `year` term
   - without `year` term
 
