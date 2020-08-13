@@ -485,3 +485,40 @@ index_tables[[1]] %>%
 
 ```
 
+
+
+
+```{r}
+# Variability over time 
+# hsi_data %>% 
+#   filter(index %in% "tmp_f_sd",
+#          type %in% "Hospitalizations") %>% 
+#    ggplot(aes(x = year, y = value, color = installation)) +
+#       geom_point() +
+#       geom_line() +
+#       labs(
+#         title = "Temperature SD",
+#         x = "Year",
+#         y = "SD, Temp (°F)"
+#       ) +
+#       facet_grid(~type) +
+#       theme_bw() +
+#       theme(axis.text.x = element_text(angle = 90, hjust = 1))
+#   
+# hsi_data %>% 
+#   filter(index %in% "heat_index_sd",
+#          type %in% "Hospitalizations") %>% 
+#    ggplot(aes(x = year, y = value, color = installation)) +
+#       geom_point() +
+#       geom_line() +
+#       labs(
+#         title = "Temperature SD",
+#         x = "Year",
+#         y = "SD, Temp (°F)"
+#       ) +
+#       facet_grid(~type) +
+#       theme_bw() +
+#       theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
