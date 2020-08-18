@@ -30,6 +30,9 @@ amb_boot_2yr_block_all <- read_rds("data/amb_boot_2yr_block_all.rds")
 hosp_boot_2yr_block_all <- read_rds("data/hosp_boot_2yr_block_all.rds")
 rme_boot_2yr_block_all <- read_rds("data/rme_boot_2yr_block_all.rds")
 
+amb_boot_2yr_block_addl <- read_rds("data/amb_boot_2yr_block_addl.rds")
+hosp_boot_2yr_block_addl <- read_rds("data/hosp_boot_2yr_block_addl.rds")
+rme_boot_2yr_block_addl <- read_rds("data/rme_boot_2yr_block_addl.rds")
 
 amb_boot_3yr_block <- read_rds("data/amb_boot_3yr_block.rds")
 hosp_boot_3yr_block <- read_rds("data/hosp_boot_3yr_block.rds")
@@ -193,34 +196,132 @@ ggsave(filename = "2yr_degree_all_plot.png", path = "output", width = 8, height 
 
 ```{r}
 
+# Day-based indices
 
-amb_boot_2yr_block_all %>% 
-  unnest(tidy) %>%
-  mutate(type = "AMBULATORY") %>% 
-  dplyr::select(-amb_data) %>% 
-  bind_rows(
-hosp_boot_2yr_block_all %>% 
-  unnest(tidy) %>%
-  mutate(type = "HOSPITALIZATIONS") %>% 
-  dplyr::select(-hosp_data)
-) %>% bind_rows(
-rme_boot_2yr_block_all %>% 
-  unnest(tidy) %>%
-  mutate(type = "REPORTABLE EVENTS") %>% 
-  dplyr::select(-rme_data)
-) %>%   
+plot_day_indices <-
+  amb_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+    mutate(type = "AMBULATORY") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+    mutate(type = "HOSPITALIZATIONS") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+    mutate(type = "REPORTABLE EVENTS") %>% 
+    dplyr::select(-rme_data)
+  ) %>% bind_rows(
+  amb_boot_2yr_block_addl %>% 
+    unnest(tidy) %>%
+    mutate(type = "AMBULATORY") %>% 
+    dplyr::select(-amb_data) 
+  ) %>% bind_rows(
+  hosp_boot_2yr_block_addl %>% 
+    unnest(tidy) %>%
+    mutate(type = "HOSPITALIZATIONS") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block_addl %>% 
+    unnest(tidy) %>%
+    mutate(type = "REPORTABLE EVENTS") %>% 
+    dplyr::select(-rme_data)
+  ) %>%
   dplyr::select(index, term:type) %>% 
   filter(term %in% "value",
-         str_detect(index, "hour|day")) %>% # filter all indices with `hour` or `day` in name 
-   mutate(statistic = case_when(str_detect(index, "hour")  ~ statistic * 24,
+         str_detect(index, "day") # filter all indices with `day` in name 
+      ) %>% 
+  mutate(statistic = case_when(str_detect(index, "hour")  ~ statistic * 24,
                         TRUE ~ statistic),
-          bias = case_when(str_detect(index, "hour")  ~ bias * 24,
+         bias = case_when(str_detect(index, "hour")  ~ bias * 24,
                         TRUE ~ bias),
-          std.error = case_when(str_detect(index, "hour")  ~ std.error * 24,
+         std.error = case_when(str_detect(index, "hour")  ~ std.error * 24,
                         TRUE ~ std.error),
-          conf.low = case_when(str_detect(index, "hour")  ~ conf.low * 24,
+         conf.low = case_when(str_detect(index, "hour")  ~ conf.low * 24,
                         TRUE ~ conf.low),
-          conf.high = case_when(str_detect(index, "hour")  ~ conf.high * 24,
+         conf.high = case_when(str_detect(index, "hour")  ~ conf.high * 24,
+                        TRUE ~ conf.high),
+      #index = dplyr::recode(index, `tmp_max_may_sep` = "tmp_f_max_may_sep"),
+         timeframe = case_when(!str_detect(index, "may") ~ "FULL YEAR",
+                               str_detect(index, "may")   ~ "MAY-SEP"),  # create column for `full year` or `heat season`
+         index = case_when(!str_detect(index, "may") ~ as.character(index),
+                           str_detect(index, "may") ~ as.character(str_remove(index, "_may_sep"))),  # remove `_may_sep` suffix
+         index = forcats::fct_reorder(index, statistic - bias) # order index by bootstrap mean (statistic - bias) for plot appearance
+                           ) %>%
+  filter(!index %in% c("days_wbgt_max_gt1sd",
+                       "days_heat_index_max_gt1sd",
+                       "days_hi_gt90",
+                       "days_tmp_max_gt95pct",
+                       "days_heat_index_gt85pct",
+                       "days_tmp_max_gt85pct",
+                       "days_heat_index_gt85pct",
+                       "days_tmp_max_gt2sd",
+                       "days_hi_gt80",
+                       "days_tmp_max_gt90pct")) %>%     # filter selection of "null" indices, tight CIs at RR 1.0
+  ggplot() +
+        geom_point(aes(x = exp(statistic), y = index), shape = 1, fill = "white", color = "black", size = 1) +
+        geom_point(aes(x = exp(statistic - bias), y = index), size = 1) +
+        geom_errorbarh(
+          aes(y = index,
+              xmin = exp(conf.low),
+              xmax = exp(conf.high))) +
+         geom_vline(aes(xintercept = 1), colour = "blue") +
+         facet_grid(vars(timeframe), vars(type)) +
+         theme_bw() +
+         theme(#axis.text.y = element_text(size = rel(0.75)),
+               axis.title.y = element_blank()) +
+         xlab("Rate Ratio") 
+
+
+
+
+# Hour-based indices
+
+plot_hour_indices <-
+  amb_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+    mutate(type = "AMBULATORY") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+    mutate(type = "HOSPITALIZATIONS") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block_all %>% 
+    unnest(tidy) %>%
+    mutate(type = "REPORTABLE EVENTS") %>% 
+    dplyr::select(-rme_data)
+  ) %>% bind_rows(
+  amb_boot_2yr_block_addl %>% 
+    unnest(tidy) %>%
+    mutate(type = "AMBULATORY") %>% 
+    dplyr::select(-amb_data) 
+  ) %>% bind_rows(
+  hosp_boot_2yr_block_addl %>% 
+    unnest(tidy) %>%
+    mutate(type = "HOSPITALIZATIONS") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block_addl %>% 
+    unnest(tidy) %>%
+    mutate(type = "REPORTABLE EVENTS") %>% 
+    dplyr::select(-rme_data)
+  ) %>%
+  dplyr::select(index, term:type) %>% 
+  filter(term %in% "value",
+         str_detect(index, "hour")) %>% # filter all indices with `hour` or `day` in name 
+  mutate(statistic = case_when(str_detect(index, "hour")  ~ statistic * 24,
+                        TRUE ~ statistic),
+         bias = case_when(str_detect(index, "hour")  ~ bias * 24,
+                        TRUE ~ bias),
+         std.error = case_when(str_detect(index, "hour")  ~ std.error * 24,
+                        TRUE ~ std.error),
+         conf.low = case_when(str_detect(index, "hour")  ~ conf.low * 24,
+                        TRUE ~ conf.low),
+         conf.high = case_when(str_detect(index, "hour")  ~ conf.high * 24,
                         TRUE ~ conf.high),
       #index = dplyr::recode(index, `tmp_max_may_sep` = "tmp_f_max_may_sep"),
          timeframe = case_when(!str_detect(index, "may") ~ "FULL YEAR",
@@ -242,25 +343,93 @@ rme_boot_2yr_block_all %>%
          theme(#axis.text.y = element_text(size = rel(0.75)),
                axis.title.y = element_blank()) +
          xlab("Rate Ratio") 
+  
 
 
-ggsave(filename = "2yr_day_hour_all_plot.png", path = "output", width = 8, height = 5)
+
+
+# All day and hour indices
+
+amb_boot_2yr_block_all %>% 
+  unnest(tidy) %>%
+  mutate(type = "AMBULATORY") %>% 
+  dplyr::select(-amb_data) %>% 
+  bind_rows(
+hosp_boot_2yr_block_all %>% 
+  unnest(tidy) %>%
+  mutate(type = "HOSPITALIZATIONS") %>% 
+  dplyr::select(-hosp_data)
+) %>% bind_rows(
+rme_boot_2yr_block_all %>% 
+  unnest(tidy) %>%
+  mutate(type = "REPORTABLE EVENTS") %>% 
+  dplyr::select(-rme_data)
+) %>% bind_rows(
+amb_boot_2yr_block_addl %>% 
+  unnest(tidy) %>%
+  mutate(type = "AMBULATORY") %>% 
+  dplyr::select(-amb_data) 
+) %>% bind_rows(
+hosp_boot_2yr_block_addl %>% 
+  unnest(tidy) %>%
+  mutate(type = "HOSPITALIZATIONS") %>% 
+  dplyr::select(-hosp_data)
+) %>% bind_rows(
+rme_boot_2yr_block_addl %>% 
+  unnest(tidy) %>%
+  mutate(type = "REPORTABLE EVENTS") %>% 
+  dplyr::select(-rme_data)
+) %>%
+dplyr::select(index, term:type) %>% 
+filter(term %in% "value",
+       str_detect(index, "hour|day")) %>% # filter all indices with `hour` or `day` in name 
+mutate(statistic = case_when(str_detect(index, "hour")  ~ statistic * 24,
+                      TRUE ~ statistic),
+       bias = case_when(str_detect(index, "hour")  ~ bias * 24,
+                      TRUE ~ bias),
+       std.error = case_when(str_detect(index, "hour")  ~ std.error * 24,
+                      TRUE ~ std.error),
+       conf.low = case_when(str_detect(index, "hour")  ~ conf.low * 24,
+                      TRUE ~ conf.low),
+       conf.high = case_when(str_detect(index, "hour")  ~ conf.high * 24,
+                      TRUE ~ conf.high),
+    #index = dplyr::recode(index, `tmp_max_may_sep` = "tmp_f_max_may_sep"),
+       timeframe = case_when(!str_detect(index, "may") ~ "FULL YEAR",
+                             str_detect(index, "may")   ~ "MAY-SEP"),  # create column for `full year` or `heat season`
+       index = case_when(!str_detect(index, "may") ~ as.character(index),
+                         str_detect(index, "may") ~ as.character(str_remove(index, "_may_sep"))),  # remove `_may_sep` suffix
+       index = forcats::fct_reorder(index, statistic - bias) # order index by bootstrap mean (statistic - bias) for plot appearance
+                         ) %>% 
+ggplot() +
+      geom_point(aes(x = exp(statistic), y = index), shape = 1, fill = "white", color = "black", size = 1) +
+      geom_point(aes(x = exp(statistic - bias), y = index), size = 1) +
+      geom_errorbarh(
+        aes(y = index,
+            xmin = exp(conf.low),
+            xmax = exp(conf.high))) +
+       geom_vline(aes(xintercept = 1), colour = "blue") +
+       facet_grid(vars(timeframe), vars(type)) +
+       theme_bw() +
+       theme(#axis.text.y = element_text(size = rel(0.75)),
+             axis.title.y = element_blank()) +
+       xlab("Rate Ratio") 
+
+# Patchwork grid plot of day- and hour-based indices
+(plot_day_indices / plot_hour_indices) + plot_annotation(tag_levels = 'A') + 
+  plot_layout(heights = c(1.75, 1)) &
+  theme(text = element_text(size = 8))
+  # vertical layout
+
+# (plot_day_indices + plot_hour_indices) + plot_annotation(tag_levels = 'A') # horizontl layout
+
+ggsave(filename = "2yr_day_hour_split_plot.png", path = "output", width = 7, height = 8)
+#ggsave(filename = "2yr_day_hour_all_plot.png", path = "output", width = 8, height = 5)
 
 
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-
+## Additional Figures/ Sensitivity Analyses
 
 
 ```{r}
@@ -514,47 +683,6 @@ boot2_long %>%
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-## Additional Figures/ Sensitivity Analyses
 
 
 ### 2 year bootstrap with Bca CI's
