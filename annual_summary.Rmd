@@ -6,7 +6,8 @@ output:
     toc_float: true
 ---
 
-```{r setup, include=FALSE}
+```{r setup}
+
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "C:/Users/slewa/Projects/heat_stress")
 
