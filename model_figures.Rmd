@@ -250,7 +250,8 @@ plot_day_indices <-
                            str_detect(index, "may") ~ as.character(str_remove(index, "_may_sep"))),  # remove `_may_sep` suffix
          index = forcats::fct_reorder(index, statistic - bias) # order index by bootstrap mean (statistic - bias) for plot appearance
                            ) %>%
-  filter(!index %in% c("days_wbgt_max_gt1sd",
+  filter(!index %in% c("days_wbgt_gt95pct",
+                       "days_wbgt_max_gt1sd",
                        "days_heat_index_max_gt1sd",
                        "days_hi_gt90",
                        "days_tmp_max_gt95pct",
@@ -259,7 +260,13 @@ plot_day_indices <-
                        "days_heat_index_gt85pct",
                        "days_tmp_max_gt2sd",
                        "days_hi_gt80",
-                       "days_tmp_max_gt90pct")) %>%     # filter selection of "null" indices, tight CIs at RR 1.0
+                       "days_tmp_max_gt90pct",
+                       "days_tmp_max_gt1sd",
+                       "days_heat_index_max_gt85pct",
+                       "days_heat_index_max_gt90pct",
+                       "days_wbgt_gt85",
+                       "days_hi_gt103",
+                       "days_heat_index_max_gt95pct")) %>%     # filter selection of "null" indices, tight CIs at RR 1.0
   ggplot() +
         geom_point(aes(x = exp(statistic), y = index), shape = 1, fill = "white", color = "black", size = 1) +
         geom_point(aes(x = exp(statistic - bias), y = index), size = 1) +
@@ -422,10 +429,10 @@ ggplot() +
 
 # (plot_day_indices + plot_hour_indices) + plot_annotation(tag_levels = 'A') # horizontl layout
 
-ggsave(filename = "2yr_day_hour_split_plot.png", path = "output", width = 7, height = 8)
+ggsave(filename = "2yr_day_hour_split_plot.png", path = "output", width = 8, height = 7)
 #ggsave(filename = "2yr_day_hour_all_plot.png", path = "output", width = 8, height = 5)
 
-
+# Display 14, hide 17 of `day` indices; display 14 of 31 sets (28 of 62 indices) 
 ```
 
 
@@ -729,6 +736,9 @@ rme_boot_2yr_block %>%
                axis.title.y = element_blank()) +
          xlab("Rate Ratio") +
          ggtitle("2-year block bootstraps, Bca CIs")
+
+
+ggsave(filename = "sens_bca.png", path = "output")
 ```
 
 
@@ -917,7 +927,14 @@ amb_grouped <-
         filter(term %in% "value") %>% 
         mutate(model = "boot2yr_basic") %>% 
     dplyr::select(index, statistic, bias, conf.low, conf.high, model)
-    ) %>% 
+    ) %>%
+  bind_rows(
+    amb_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+      filter(term %in% "value") %>% 
+      mutate(model = "boot2yr_bca") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+) %>% 
   bind_rows(
    amb_boot_3yr_block %>% 
     unnest(tidy) %>%
@@ -1005,7 +1022,14 @@ rme_grouped <-
         filter(term %in% "value") %>% 
         mutate(model = "boot2yr_basic") %>% 
     dplyr::select(index, statistic, bias, conf.low, conf.high, model)
-    ) %>% 
+    ) %>%
+  bind_rows(
+    rme_boot_2yr_block %>% 
+    unnest(tidy_bca) %>%
+      filter(term %in% "value") %>% 
+      mutate(model = "boot2yr_bca") %>% 
+  dplyr::select(index, statistic, bias, conf.low, conf.high, model)
+) %>% 
   bind_rows(
    rme_boot_3yr_block %>% 
     unnest(tidy) %>%
@@ -1021,18 +1045,20 @@ rme_grouped <-
 amb_grouped %>%
 #filter(!model %in% c("nb_no_yr", "boot2yr_bca", "boot3yr_bca")) %>% 
   ggplot(aes(fill = model, x = index)) +
-        geom_point(aes(y = exp(statistic)), position = position_dodge(0.5)) +
+          geom_point(aes(y = exp(statistic)), position = position_dodge(0.5)) +
         geom_point(aes(y = exp(statistic - bias)), shape = 4, position = position_dodge(0.5)) +
         geom_errorbar(
           aes(ymin = exp(conf.low),
               ymax = exp(conf.high),
-          color = model),
+              color = model),
               position = position_dodge(0.5)) +
          coord_flip() +
          geom_hline(aes(yintercept = 1), color = "blue") +
          theme_bw() +
          theme(axis.text.y = element_text(size = rel(0.75))) +
          ggtitle("Ambulatory Rate Ratios")
+
+ggsave(filename = "sens_amb_mods.png", path = "output")
 
 hosp_grouped %>%
 #filter(!model %in% c("nb_no_yr", "boot2yr_bca", "boot3yr_bca")) %>% 
@@ -1050,6 +1076,8 @@ hosp_grouped %>%
          theme(axis.text.y = element_text(size = rel(0.75))) +
          ggtitle("Hospitalization Rate Ratios")
 
+ggsave(filename = "sens_hosp_mods.png", path = "output")
+
 rme_grouped %>% 
 #filter(!model %in% c("nb_no_yr", "boot2yr_bca", "boot3yr_bca")) %>% 
   ggplot(aes(fill = model, x = index)) +
@@ -1066,7 +1094,7 @@ rme_grouped %>%
          theme(axis.text.y = element_text(size = rel(0.75))) +
          ggtitle("Reportable Event Rate Ratios")
 
-
+ggsave(filename = "sens_rme_mods.png", path = "output")
 
 ```
 
