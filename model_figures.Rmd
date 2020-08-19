@@ -1191,6 +1191,79 @@ rme_data %>%
 
 ## Model Output Tables
 
+`tmp_mean_may_sep`
+reporting bootstrap mean (statistic - bias) with bootstrap standard CI
+
+```{r}
+
+amb_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Ambulatory") %>% 
+    filter(index %in% "tmp_mean_may_sep") %>%
+  dplyr::select(term, statistic, bias, conf.low, conf.high) %>%
+  mutate(term = dplyr::recode(term, installationfort_bliss   = "Fort Bliss",
+                              installationfort_bragg   = "Fort Bragg",
+                              installationfort_campbell   = "Fort Campbell",
+                              installationfort_hood   = "Fort Hood",
+                              installationfort_jackson   = "Fort Jackson",
+                              installationfort_leonard_wood = "Fort Leonard Wood",
+                              installationfort_polk   = "Fort Polk",
+                              installationfort_riley   = "Fort Riley",
+                              installationfort_stewart   = "Fort Stewart"),
+         boot_mean = paste0(round(statistic - bias, 4)," ", "(", round(conf.low, 4), 
+                              ", ", round(conf.high, 4), ")"),
+         rr = paste0(round(exp(statistic - bias), 4)," ", "(", round(exp(conf.low), 4), 
+                              ", ", round(exp(conf.high), 4), ")")) %>%
+  dplyr::select(term,  boot_mean, rr)  
+
+
+hosp_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Hospitalizations") %>% 
+    filter(index %in% "tmp_mean_may_sep") %>%
+  dplyr::select(term, statistic, bias, conf.low, conf.high) %>%
+  mutate(term = dplyr::recode(term, installationfort_bliss   = "Fort Bliss",
+                              installationfort_bragg   = "Fort Bragg",
+                              installationfort_campbell   = "Fort Campbell",
+                              installationfort_hood   = "Fort Hood",
+                              installationfort_jackson   = "Fort Jackson",
+                              installationfort_leonard_wood = "Fort Leonard Wood",
+                              installationfort_polk   = "Fort Polk",
+                              installationfort_riley   = "Fort Riley",
+                              installationfort_stewart   = "Fort Stewart"),
+          boot_mean = paste0(round(statistic - bias, 4)," ", "(", round(conf.low, 4), 
+                              ", ", round(conf.high, 4), ")") ,
+          rr = paste0(round(exp(statistic - bias), 4)," ", "(", round(exp(conf.low), 4), 
+                              ", ", round(exp(conf.high), 4), ")")) %>%
+  dplyr::select(term, boot_mean, rr)  
+
+
+rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "Reportable Events") %>% 
+    filter(index %in% "tmp_mean_may_sep") %>%
+  dplyr::select(term, statistic, bias, conf.low, conf.high) %>%
+  mutate(term = dplyr::recode(term, installationfort_bliss   = "Fort Bliss",
+                              installationfort_bragg   = "Fort Bragg",
+                              installationfort_campbell   = "Fort Campbell",
+                              installationfort_hood   = "Fort Hood",
+                              installationfort_jackson   = "Fort Jackson",
+                              installationfort_leonard_wood = "Fort Leonard Wood",
+                              installationfort_polk   = "Fort Polk",
+                              installationfort_riley   = "Fort Riley",
+                              installationfort_stewart   = "Fort Stewart"),
+          boot_mean = paste0(round(statistic - bias, 4)," ", "(", round(conf.low, 4), 
+                              ", ", round(conf.high, 4), ")"),
+         rr = paste0(round(exp(statistic - bias), 4)," ", "(", round(exp(conf.low), 4), 
+                              ", ", round(exp(conf.high), 4), ")")) %>%
+  dplyr::select(term,  boot_mean, rr)  
+
+```
+
+
+
+
+
 ```{r}
 # RME model table - full year
 
