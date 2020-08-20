@@ -1627,3 +1627,54 @@ hsi_data %>%
 
 ```
 
+
+## Impact calculations
+
+
+
+```{r}
+
+# 2018 ambulatory
+
+hsi_select %>% 
+  filter(type %in% "Ambulatory Data",
+         index %in% "tmp_f_mean",
+         year %in% 2018)
+
+
+hsi_select %>% 
+  filter(type %in% "Ambulatory Data",
+         index %in% "tmp_f_mean",
+         year %in% 2018) %>% 
+  dplyr::select(count, population, count_overall) %>% 
+  summarise_all(funs(sum))
+
+
+((3612 / 204291) * 1.05) * 204291
+
+
+# 2018 hospitalizations
+
+hsi_select %>% 
+  filter(type %in% "Hospitalizations",
+         index %in% "tmp_f_mean",
+         year %in% 2018)
+
+
+hsi_select %>% 
+  filter(type %in% "Hospitalizations",
+         index %in% "tmp_f_mean",
+         year %in% 2018) %>% 
+  dplyr::select(count, population, count_overall) %>% 
+  summarise_all(funs(sum))
+
+((126 / 204291) * 1.14) * 204291
+
+
+
+```
+
+
+
+
+
