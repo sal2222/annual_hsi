@@ -499,6 +499,17 @@ rme_boot_2yr_block_addl <-
 
 write_rds(rme_boot_2yr_block_addl, path = "data/rme_boot_2yr_block_addl.rds")
 
+
+# amb_boot_2yr_block_addl <-
+#   read_rds("data/amb_boot_2yr_block_addl.rds")
+# 
+# hosp_boot_2yr_block_addl <-
+#   read_rds("data/hosp_boot_2yr_block_addl.rds")
+# 
+# rme_boot_2yr_block_addl <-
+#   read_rds("data/rme_boot_2yr_block_addl.rds")
+
+
 ```
 
 
@@ -701,9 +712,10 @@ RR whisker plot and table
 
 amb_boot2_long <-
   amb_boot_2yr_block_all %>%
+  bind_rows(amb_boot_2yr_block_addl) %>% 
     unnest(tidy) %>% 
     filter(term %in% "value") %>% 
-    dplyr::select(index, statistic, conf.low, conf.high) %>% 
+    dplyr::select(index, statistic, bias, conf.low, conf.high) %>% 
     pivot_longer(cols = -index,
                  names_to = "term",
                  values_to = "value") %>% 
@@ -712,9 +724,10 @@ amb_boot2_long <-
   
 hosp_boot2_long <-
   hosp_boot_2yr_block_all %>%
+     bind_rows(hosp_boot_2yr_block_addl) %>% 
     unnest(tidy) %>% 
     filter(term %in% "value") %>% 
-    dplyr::select(index, statistic, conf.low, conf.high) %>% 
+    dplyr::select(index, statistic, bias, conf.low, conf.high) %>% 
     pivot_longer(cols = -index,
                  names_to = "term",
                  values_to = "value") %>% 
@@ -723,9 +736,10 @@ hosp_boot2_long <-
 
 rme_boot2_long <-
   rme_boot_2yr_block_all %>%
+    bind_rows(rme_boot_2yr_block_addl) %>% 
     unnest(tidy) %>% 
     filter(term %in% "value") %>% 
-    dplyr::select(index, statistic, conf.low, conf.high) %>% 
+    dplyr::select(index, statistic, bias, conf.low, conf.high) %>% 
     pivot_longer(cols = -index,
                  names_to = "term",
                  values_to = "value") %>% 
@@ -738,6 +752,8 @@ boot2_long <-
   amb_boot2_long %>% 
     bind_rows(hosp_boot2_long) %>% 
     bind_rows(rme_boot2_long)
+
+# write_rds(boot2_long, path = "data/boot2_long.rds")
 
 
 ## Full Index RR Plot - Facet
@@ -955,6 +971,64 @@ amb_boot_2yr_block_all %>%
 
 
 ```
+
+
+# Positive and Negative Association RR Tables
+
+```{r}
+
+# All index - outcome pairs
+
+boot2_long %>% 
+ mutate(association = paste(index, "-", outcome)) %>%
+  pivot_wider(names_from = term, values_from = value) %>% 
+  mutate(mean_boot_est = statistic - bias,
+         rr = exp(mean_boot_est),
+         rr_low = exp(conf.low),
+         rr_high = exp(conf.high),
+         rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")"))
+  
+
+# Positive associations
+
+
+positive_2yr_boot <-
+  boot2_long %>% 
+   mutate(association = paste(index, "-", outcome)) %>%
+    pivot_wider(names_from = term, values_from = value) %>% 
+    mutate(mean_boot_est = statistic - bias,
+           rr = exp(mean_boot_est),
+           rr_low = exp(conf.low),
+           rr_high = exp(conf.high),
+           rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
+    dplyr::filter(rr_low > 1)
+  
+
+positive_2yr_boot %>% 
+  group_by(outcome) %>% 
+  count()
+
+# Negative associations
+
+negative_2yr_boot <-
+  boot2_long %>% 
+   mutate(association = paste(index, "-", outcome)) %>%
+    pivot_wider(names_from = term, values_from = value) %>% 
+    mutate(mean_boot_est = statistic - bias,
+           rr = exp(mean_boot_est),
+           rr_low = exp(conf.low),
+           rr_high = exp(conf.high),
+           rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
+    dplyr::filter(rr_high < 1)
+
+
+negative_2yr_boot %>% 
+  group_by(outcome) %>% 
+  count()
+```
+
+
+
 
 # Sensitivity analysis plots
 

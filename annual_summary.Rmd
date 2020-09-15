@@ -127,6 +127,7 @@ hsi_select %>%
   facet_wrap(~index, scale = "free") + 
   theme_bw()
 
+#ggsave("output/indices_by_installation.png")
 
 
 
