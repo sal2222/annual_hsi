@@ -1057,8 +1057,14 @@ boot2results <-
   boot2_results %>% 
     dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
     mutate_all(as_factor) %>% 
-    table1::table1(~ outcome + index_type + timeframe + exp_measure + anomaly | ci_range, data = ., overall = "Total")
+    table1::table1(~ outcome + index_type + timeframe + exp_measure + anomaly | ci_range, data = ., overall = "Total", row_wise = TRUE)
 
+  
+  boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    mutate_all(as_factor) %>% 
+    table1::table1(~ ci_range | outcome + index_type , data = ., overall = "Total")
+  
 
 
 
