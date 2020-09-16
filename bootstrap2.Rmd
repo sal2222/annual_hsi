@@ -10,6 +10,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_knit$set(root.dir = "C:/Users/slewa/Projects/heat_stress")
 
+
 library(tidyverse)
 library(readxl)
 library(knitr)
@@ -37,6 +38,8 @@ library(corrr)
 library(psych)
 library(zoo)
 library(patchwork) # install_github("thomasp85/patchwork")
+library(vcd)
+
 ```
 
 Annual models from DMED data and annual indices of heat and humidity from NLDAS-2
@@ -675,7 +678,7 @@ rme_boot_std <-
 
 
 
-RR whisker plot and table
+## RR whisker plot and table
 
 ```{r all_indices, eval = FALSE}
 
@@ -755,6 +758,9 @@ boot2_long <-
 
 # write_rds(boot2_long, path = "data/boot2_long.rds")
 
+boot2_long <-
+  read_rds(path = "data/boot2_long.rds")
+
 
 ## Full Index RR Plot - Facet
 boot2_long %>% 
@@ -775,6 +781,9 @@ boot2_long %>%
                axis.title.y = element_blank()) +
           ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
          xlab("Rate Ratio")
+
+
+#ggsave("output/boot2_all.png", width = 7.5, height = 22)
   
   
 ## Reduced Index RR Plot - Facet
@@ -806,7 +815,7 @@ boot2_long %>%
          xlab("Rate Ratio")
 
 
-ggsave("boot2_reduced.png", width = 7.5, height = 9)
+#ggsave("boot2_reduced.png", width = 7.5, height = 9)
 
 
 
@@ -842,7 +851,7 @@ boot2_long %>%
           #ggtitle("HSI Rate Ratios from Annual Indices of Heat") +
          xlab("Rate Ratio")
 
-ggsave("boot2_degrees.png", width = 8, height = 5)
+#ggsave("boot2_degrees.png", width = 8, height = 5)
 
 # Days/hour indices
 
@@ -874,7 +883,7 @@ boot2_long %>%
          xlab("Rate Ratio")
 
 
-ggsave("boot2_days.png", width = 8, height = 5)
+#ggsave("boot2_days.png", width = 8, height = 5)
 
 
 # Slice top 20 ambulatory statistic
@@ -920,7 +929,7 @@ boot2_long %>%
          xlab("Rate Ratio")
 
 
-ggsave("boot2_days.png", width = 8, height = 5)
+#ggsave("boot2_days.png", width = 8, height = 5)
 
 
 
@@ -973,7 +982,7 @@ amb_boot_2yr_block_all %>%
 ```
 
 
-# Positive and Negative Association RR Tables
+## Positive and Negative Association RR Tables
 
 ```{r}
 
@@ -989,42 +998,137 @@ boot2_long %>%
          rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")"))
   
 
-# Positive associations
 
 
-positive_2yr_boot <-
-  boot2_long %>% 
-   mutate(association = paste(index, "-", outcome)) %>%
-    pivot_wider(names_from = term, values_from = value) %>% 
-    mutate(mean_boot_est = statistic - bias,
-           rr = exp(mean_boot_est),
-           rr_low = exp(conf.low),
-           rr_high = exp(conf.high),
-           rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
-    dplyr::filter(rr_low > 1)
-  
+# As single dataframe with column for association clasification
+  # define whether RR is positive, negative, or null
+  # classify by timeframe: full-year/heat season
+  # classify by exposure measure: days/hours/degrees 
+  # classify by index type: temp/HI/WBGT
+  # classify as anomaly-based: anomaly/non-anomaly 
 
-positive_2yr_boot %>% 
-  group_by(outcome) %>% 
-  count()
+boot2_results <-
+  boot2_long %>%
+     mutate(association = paste(index, "-", outcome)) %>%
+      pivot_wider(names_from = term, values_from = value) %>% 
+      mutate(mean_boot_est = statistic - bias,
+             rr = exp(mean_boot_est),
+             rr_low = exp(conf.low),
+             rr_high = exp(conf.high),
+             rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
+    mutate(ci_range = case_when(
+        rr_low > 1 ~ "positive",
+        rr_high < 1 ~ "negative",
+        TRUE ~ "null"
+      ),
+      exp_measure = case_when(
+        str_detect(index, "day") ~ "Days",
+        str_detect(index, "hour") ~ "Hours",
+        TRUE ~ "Degrees"
+      ),
+      
+      anomaly = case_when(
+        str_detect(index, "anom") ~ "Anomaly",
+        TRUE ~ "Non-Anomaly"
+      ),
+      index_type = case_when(
+        str_detect(index, "temp|tmp") ~ "T",
+        str_detect(index, "heat_index|hi") ~ "HI",
+        str_detect(index, "wbgt") ~ "WBGT",
+        TRUE ~ "not classified"
+      ),
+      timeframe = case_when(
+        str_detect(index, "may") ~ "May-Sep",
+        TRUE ~ "Full Yr"
+      )
+             ) 
 
-# Negative associations
 
-negative_2yr_boot <-
-  boot2_long %>% 
-   mutate(association = paste(index, "-", outcome)) %>%
-    pivot_wider(names_from = term, values_from = value) %>% 
-    mutate(mean_boot_est = statistic - bias,
-           rr = exp(mean_boot_est),
-           rr_low = exp(conf.low),
-           rr_high = exp(conf.high),
-           rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
-    dplyr::filter(rr_high < 1)
+#write_rds(boot2_results, "data/boot2_results.rds")
+
+boot2results <-
+  read_rds("data/boot2_results.rds")
 
 
-negative_2yr_boot %>% 
-  group_by(outcome) %>% 
-  count()
+
+# Cross-tabilate associations
+
+
+boot2_results %>% 
+  dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+  vcd::structable(outcome + timeframe ~ ci_range, .)
+
+boot2_results %>% 
+  dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+  vcd::structable(outcome + index_type ~ ci_range, .)
+
+outcome_time_structable <-
+  boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    vcd::structable(ci_range ~ outcome + timeframe, .)
+
+
+vcd::mosaic(outcome_time_structable, highlighting = "ci_range", highlighting_fill = c("red4", "tan", "darkgreen"))
+
+
+# 
+# 
+# # Positive associations
+# 
+# 
+# positive_2yr_boot <-
+#   boot2_long %>% 
+#    mutate(association = paste(index, "-", outcome)) %>%
+#     pivot_wider(names_from = term, values_from = value) %>% 
+#     mutate(mean_boot_est = statistic - bias,
+#            rr = exp(mean_boot_est),
+#            rr_low = exp(conf.low),
+#            rr_high = exp(conf.high),
+#            rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
+#     dplyr::filter(rr_low > 1)
+#   
+# 
+# positive_2yr_boot %>% 
+#   group_by(outcome) %>% 
+#   count()
+# 
+# # Negative associations
+# 
+# negative_2yr_boot <-
+#   boot2_long %>% 
+#    mutate(association = paste(index, "-", outcome)) %>%
+#     pivot_wider(names_from = term, values_from = value) %>% 
+#     mutate(mean_boot_est = statistic - bias,
+#            rr = exp(mean_boot_est),
+#            rr_low = exp(conf.low),
+#            rr_high = exp(conf.high),
+#            rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
+#     dplyr::filter(rr_high < 1)
+# 
+# 
+# negative_2yr_boot %>% 
+#   group_by(outcome) %>% 
+#   count()
+# 
+# 
+# # No association
+# 
+# no_assoc_boot <-
+#   boot2_long %>%
+#    mutate(association = paste(index, "-", outcome)) %>%
+#     pivot_wider(names_from = term, values_from = value) %>% 
+#     mutate(mean_boot_est = statistic - bias,
+#            rr = exp(mean_boot_est),
+#            rr_low = exp(conf.low),
+#            rr_high = exp(conf.high),
+#            rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) %>% 
+#     anti_join(positive_2yr_boot, by = "association") %>% 
+#     anti_join(negative_2yr_boot, by = "association")
+
+
+
+
+
 ```
 
 
