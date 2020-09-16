@@ -39,6 +39,7 @@ library(psych)
 library(zoo)
 library(patchwork) # install_github("thomasp85/patchwork")
 library(vcd)
+library(table1)
 
 ```
 
@@ -1022,9 +1023,9 @@ boot2_results <-
         TRUE ~ "null"
       ),
       exp_measure = case_when(
-        str_detect(index, "day") ~ "Days",
-        str_detect(index, "hour") ~ "Hours",
-        TRUE ~ "Degrees"
+        str_detect(index, "day") ~ "Day",
+        str_detect(index, "hour") ~ "Hour",
+        TRUE ~ "Deg"
       ),
       
       anomaly = case_when(
@@ -1051,7 +1052,24 @@ boot2results <-
 
 
 
-# Cross-tabilate associations
+# Overview Table
+
+  boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    mutate_all(as_factor) %>% 
+    table1::table1(~ outcome + index_type + timeframe + exp_measure + anomaly | ci_range, data = ., overall = "Total")
+
+
+
+
+# Cross-tabulate associations
+
+outcome_structable <-
+  boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    vcd::structable(ci_range ~ outcome, .)
+
+vcd::mosaic(outcome_structable, highlighting = "ci_range", highlighting_fill = c("red4", "tan", "darkgreen"))
 
 
 boot2_results %>% 
@@ -1068,11 +1086,56 @@ outcome_time_structable <-
     vcd::structable(ci_range ~ outcome + timeframe, .)
 
 
+
+#png("output/mosaic_time.png")
+
 vcd::mosaic(outcome_time_structable, highlighting = "ci_range", highlighting_fill = c("red4", "tan", "darkgreen"))
+#dev.off()
 
 
-# 
-# 
+#png("output/mosaic_measure.png")
+
+outcome_measure_structable <-
+  boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    vcd::structable(ci_range ~ outcome + exp_measure, .)
+
+vcd::mosaic(outcome_measure_structable, highlighting = "ci_range", highlighting_fill = c("red4", "tan", "darkgreen"))
+
+#dev.off()
+
+
+
+
+#png("output/mosaic_anomaly.png")
+
+outcome_anomaly_structable <-
+  boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    vcd::structable(ci_range ~ outcome + anomaly, .)
+
+vcd::mosaic(outcome_anomaly_structable, highlighting = "ci_range", highlighting_fill = c("red4", "tan", "darkgreen"))
+#dev.off()
+
+
+#png("output/mosaic_index_type.png")
+
+outcome_index_type_structable <-
+  boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    vcd::structable(ci_range ~ outcome + index_type, .)
+
+vcd::mosaic(outcome_index_type_structable, highlighting = "ci_range", highlighting_fill = c("red4", "tan", "darkgreen"))
+#dev.off()
+
+
+
+ boot2_results %>% 
+    dplyr::select(outcome, exp_measure, anomaly, index_type, timeframe, ci_range) %>% 
+    vcd::structable(ci_range ~ index_type, .) %>% 
+    mosaic(., highlighting = "ci_range", highlighting_fill = c("red4", "tan", "darkgreen"))
+
+
 # # Positive associations
 # 
 # 
