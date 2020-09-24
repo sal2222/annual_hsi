@@ -264,6 +264,12 @@ hsi_select %>%
   filter(term %in% "year") %>% 
   arrange(p.value)
 
+
+
+
+
+
+
 # Slope estimate
 tmp_slopes <-
   hsi_select %>% 
@@ -272,6 +278,7 @@ tmp_slopes <-
     mutate(lm_tmp = map(data, tmp_lm_function),
            tidy =   map(lm_tmp, broom::tidy),
            glance = map(lm_tmp, broom::glance))
+
 
 
 # Temperature slope estimates (1991-2018)
@@ -287,6 +294,8 @@ tmp_slopes %>%
     filter(term %in% "year",
            p.value < 0.05) %>% 
     arrange(desc(estimate)) %>% View()
+
+
 
 
 tmp_slopes %>% 
@@ -337,7 +346,7 @@ tmp_slopes_full %>%
     dplyr::select(installation, index, term:p.value) %>% 
     filter(term %in% "year",
            p.value < 0.05) %>% 
-    arrange(desc(estimate)) %>% View()
+    arrange(desc(estimate)) %>% View()  #View() to identify significant negative estimates
 
 
 tmp_slopes_full %>% 
@@ -349,6 +358,27 @@ tmp_slopes_full %>%
       coord_flip()
 
 
+# Additional indices
+
+
+tmp_slopes_addl <-
+  may_sep_day_hour_join %>%     # from "bootstrap2.Rmd"
+    filter(type %in% "Hospitalizations") %>%
+    dplyr::select(installation, index, everything()) %>% 
+    nest(data = year:value) %>% 
+    mutate(lm_tmp = map(data, tmp_lm_function),
+           tidy =   map(lm_tmp, broom::tidy),
+           glance = map(lm_tmp, broom::glance))
+  
+# Significant positive slopes
+tmp_slopes_addl %>% 
+    unnest(tidy) %>%
+    dplyr::select(installation, index, term:p.value) %>% 
+    filter(term %in% "year",
+           p.value < 0.05) %>% 
+    arrange(desc(estimate)) 
+
+599/1040
   
 ```
 
