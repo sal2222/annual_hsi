@@ -15,6 +15,7 @@ library(tidyverse)
 library(readxl)
 library(knitr)
 library(kableExtra)
+library(magick)
 library(purrr)
 library(furrr)
 library(boot)
@@ -32,6 +33,7 @@ library(glmmTMB)
 library(performance)
 library(MASS)
 library(mgcv)
+library(grid)
 library(gridExtra)
 library(tableone)
 library(corrr)
@@ -989,15 +991,30 @@ amb_boot_2yr_block_all %>%
 
 # All index - outcome pairs
 
-boot2_long %>% 
- mutate(association = paste(index, "-", outcome)) %>%
-  pivot_wider(names_from = term, values_from = value) %>% 
-  mutate(mean_boot_est = statistic - bias,
-         rr = exp(mean_boot_est),
-         rr_low = exp(conf.low),
-         rr_high = exp(conf.high),
-         rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")"))
-  
+full_irr_table <-
+  boot2_long %>% 
+   mutate(association = paste(index, "-", outcome)) %>%
+    pivot_wider(names_from = term, values_from = value) %>% 
+    mutate(mean_boot_est = statistic - bias,
+           rr = exp(mean_boot_est),
+           rr_low = exp(conf.low),
+           rr_high = exp(conf.high),
+           rate_ratio = paste0(format(round(rr, digits = 2), nsmall = 2), " (", format(round(rr_low, digits = 2), nsmall = 2), ", ", format(round(rr_high, digits = 2), nsmall = 2), ")")) 
+
+#write_rds(full_irr_table, "data/full_irr_table.rds")
+
+
+full_irr_table %>% 
+  dplyr::select(index, outcome, statistic, mean_boot_est, conf.low, conf.high, rate_ratio) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  kableExtra::kbl(caption = "2-Year Bootstrap Models, 2,000 replications, basic 95% CIs") %>% 
+  kable_classic(full_width = FALSE) %>% 
+  save_kable("output/full_irr_table.pdf")
+
+
+
+
+
 
 
 
