@@ -1029,7 +1029,7 @@ boot2_results <-
       ),
       
       anomaly = case_when(
-        str_detect(index, "anom") ~ "Anomaly",
+        str_detect(index, "anom|pct|sd") ~ "Anomaly",
         TRUE ~ "Non-Anomaly"
       ),
       index_type = case_when(
@@ -1047,7 +1047,7 @@ boot2_results <-
 
 #write_rds(boot2_results, "data/boot2_results.rds")
 
-boot2results <-
+boot2_results <-
   read_rds("data/boot2_results.rds")
 
 
