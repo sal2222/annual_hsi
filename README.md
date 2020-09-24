@@ -4,7 +4,8 @@
 
 This study characterizes associations between annually-scaled thermal indices and annual heat stress illness (HSI) morbidity outcomes among active duty soldiers at ten Continental U.S. (CONUS) Army installations in order to better characterize outcome sensitivities to changing environmental conditions.
 
-Initial data preparation code is available under the [`heat_stress`](https://github.com/sal2222/heat_stress)  repo.
+Initial data preparation code is available under the [`heat_stress`](https://github.com/sal2222/heat_stress)  repo and is outlined at https://sal2222.github.io/heat_stress/.
+Plots of HSI rates over time, by installation, against selectable annual exposure indices available at: https://sal2222.shinyapps.io/annual_heat/.
 
 ## `output` folder
 
