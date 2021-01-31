@@ -99,7 +99,10 @@ hsi_select <- hsi_data %>%
                       "wbgt_f_mean"))                          #absolute, year-round
 
 
-hsi_select
+hsi_select %>% count(index)
+
+hsi_select <- 
+  read_rds("data/hsi_select.rds")
 
 ```
 
@@ -320,8 +323,10 @@ amb_boot_2yr_block <-
   ambulatory_data %>% 
     nest(amb_data = installation:population) %>% 
   mutate(boot = map(amb_data, ~ boot(., amb_index_2yr_fun, 10000)),
-         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")),
-         tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
+         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+         
+         
+         #tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
 
 proc.time() - ptm
 
@@ -355,8 +360,10 @@ hosp_boot_2yr_block <-
   hospitalization_data %>% 
     nest(hosp_data = installation:population) %>% 
   mutate(boot = map(hosp_data, ~ boot(., hosp_index_2yr_fun, 10000)),
-         tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")),
-         tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
+         tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+         
+         
+         #tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
 
 proc.time() - ptm
 
@@ -393,9 +400,9 @@ proc.time() - ptm
 
 
 
-rme_boot_2yr_block <-
-  rme_boot_2yr_block %>% 
-    mutate(tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
+#rme_boot_2yr_block <-
+#  rme_boot_2yr_block %>% 
+#    mutate(tidy_bca = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "bca")))
   
 #write_rds(rme_boot_2yr_block, path = "data/rme_boot_2yr_block.rds")
 

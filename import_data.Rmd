@@ -17,12 +17,12 @@ This code imports and tidies data processed in the `heat_stress` project for dat
 dmed_tidy <- 
   read_rds("D:/dmed/dmed_tidy.rds")
 
-write_rds(dmed_tidy, file = "data/dmed_tidy.rds")
+# write_rds(dmed_tidy, file = "data/dmed_tidy.rds")
 
 annual_tables_list <- 
   read_rds("D:/annual_tables_list.rds")
 
- write_rds(annual_tables_list, file = "data/annual_tables_list.rds")
+ # write_rds(annual_tables_list, file = "data/annual_tables_list.rds")
 
 
 ```
@@ -101,4 +101,43 @@ joined_hsi
 
  write_rds(joined_hsi, file = "data/joined_hsi.rds")
 ```
+Next: `joined_data` to `annual_summary.Rmd`
+Modified code below:
 
+
+Annual models from DMED data.
+
+```{r hsi_data, message = FALSE}
+
+# note: does not include canopy data
+
+hsi_data <-
+  joined_hsi %>% 
+    filter(!installation %in% "ntc_and_fort_irwin",
+           !(type %in% "Hospitalizations" & year %in% 1990),
+           !(type %in% "Ambulatory Data" & year %in% 1997)) %>% 
+    mutate(installation = factor(installation, ordered = FALSE),
+         index = factor(index, ordered = FALSE),
+         type = factor(type, ordered = FALSE),
+         installation = relevel(installation, ref = "fort_bliss"))
+
+ write_rds(hsi_data, file = "data/hsi_data.rds")
+
+levels(hsi_data$installation)
+
+summary(hsi_data)
+
+
+hsi_select <- hsi_data %>% 
+  filter(index %in% c("days_tmp_gt85pct_may_sep",              #relative, heat season
+                      "days_wbgt_gt85pct_may_sep",             #relative, heat season
+                      "days_heat_index_gt85pct_may_sep",       #relative, heat season
+                      "tmp_mean_may_sep",                      #absolute, heat season
+                      "heat_index_mean_may_sep",               #absolute, heat season
+                      "wbgt_f_mean_may_sep",                   #absolute, heat season
+                      "tmp_f_mean",                            #absolute, year-round
+                      "heat_index_mean",                       #absolute, year-round
+                      "wbgt_f_mean"))                          #absolute, year-round
+
+
+ write_rds(hsi_select, file = "data/hsi_select.rds")
