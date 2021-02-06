@@ -1694,7 +1694,7 @@ hsi_select %>%
   dplyr::select(count, population, count_overall) %>% 
   summarise_all(funs(sum))
 
-((126 / 204291) * 1.14) * 204291
+
 
 
 

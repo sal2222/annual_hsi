@@ -1,0 +1,104 @@
+---
+title: "heat_season_means"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(tsibble)
+library(lubridate)
+```
+
+Need to recreate Temp.HI/WBGT May-Sep means and run models for these indices.
+
+```{r}
+
+annual_indices <- 
+  read_rds("D:/data/annual_indices.rds")
+
+
+daily_indices <- 
+  read_rds("D:/data/daily_indices.rds")
+
+daily_indices %>% 
+  count(installation)
+
+
+heat_season_mean_indices <-
+  daily_indices %>% 
+    dplyr::select(installation, date = `lubridate::date(local_dttm)`, tmp_f_mean, heat_index_mean, wbgt_u_mean) %>% 
+    filter(!lubridate::year(date) %in% "1989",
+           lubridate::month(date) %in% 05:09) %>%
+    mutate(year = lubridate::year(date)) %>% 
+    group_by(installation, year) %>% 
+    dplyr::summarise_at(
+              .vars = vars(tmp_f_mean, heat_index_mean, wbgt_u_mean),
+              .funs = mean) 
+
+  
+
+```
+
+
+
+
+```{r joined_hsi}
+
+# Join to indices of heat; center and scale heat index value (pooled, for each index/type - pooled over all included locations and years)  
+  
+joined_hsi_heat_season <-
+  heat_season_mean_indices %>% 
+    filter(!installation %in% "ntc_and_fort_irwin") %>% 
+    left_join(dmed_hsi, by = c("installation" = "location", "year" = "year")) %>% 
+      drop_na(count) %>% 
+    ungroup() %>% 
+    mutate(wbgt_f_mean = weathermetrics::celsius.to.fahrenheit(wbgt_u_mean)) %>% 
+    dplyr::select(installation, year, type, tmp_f_mean, heat_index_mean, wbgt_f_mean, count, population, rate) %>% 
+    pivot_longer(., cols = tmp_f_mean:wbgt_f_mean, names_to = "index", values_to = "index_value")
+  
+
+
+
+
+
+
+
+
+
+
+hsi_data <-
+  joined_hsi %>% 
+    left_join(canopy_stats %>% 
+                dplyr::select(installation_lower, mean_canopy),
+              by = c("installation" = "installation_lower")) %>% 
+    filter(!installation %in% "ntc_and_fort_irwin",
+           !(type %in% "Hospitalizations" & year %in% 1990),
+           !(type %in% "Ambulatory Data" & year %in% 1997)) %>% 
+    mutate(installation = factor(installation, ordered = FALSE),
+         index = factor(index, ordered = FALSE),
+         type = factor(type, ordered = FALSE),
+         bct = factor(bct), 
+         installation = relevel(installation, ref = "fort_bliss"))
+
+levels(hsi_data$installation)
+
+summary(hsi_data)
+
+
+hsi_select <- hsi_data %>% 
+  filter(index %in% c("days_tmp_gt85pct_may_sep",              #relative, heat season
+                      "days_wbgt_gt85pct_may_sep",             #relative, heat season
+                      "days_heat_index_gt85pct_may_sep",       #relative, heat season
+                      "tmp_mean_may_sep",                      #absolute, heat season
+                      "heat_index_mean_may_sep",               #absolute, heat season
+                      "wbgt_f_mean_may_sep",                   #absolute, heat season
+                      "tmp_f_mean",                            #absolute, year-round
+                      "heat_index_mean",                       #absolute, year-round
+                      "wbgt_f_mean"))                          #absolute, year-round
+
+```
+

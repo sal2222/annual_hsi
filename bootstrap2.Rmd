@@ -61,6 +61,9 @@ Annual models from DMED data and annual indices of heat and humidity from NLDAS-
 joined_hsi <-
   read_rds("data/joined_hsi.rds")
 
+hsi_data <-
+  read_rds("data/hsi_data.rds")
+
 canopy_stats <-
   read_rds("data/canopy_stats_na_reclassified.rds") %>% 
   mutate(installation_lower = janitor::make_clean_names(installation))
@@ -99,7 +102,14 @@ hsi_select <- hsi_data %>%
                       "wbgt_f_mean"))                          #absolute, year-round
 
 
-hsi_select %>% count(index)
+hsi_select_heat_season <- hsi_data %>% count(index) %>% View()
+  filter(index %in% c("tmp_f_mean_may_sep",             
+                      "wbgt_f_may_sep",            
+                      "heat_index_may_sep")
+)
+
+joined_hsi %>% count(index)
+hsi_select_heat_season %>% count(index)
 
 hsi_select <- 
   read_rds("data/hsi_select.rds")

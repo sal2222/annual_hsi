@@ -24,7 +24,8 @@ annual_tables_list <-
 
  # write_rds(annual_tables_list, file = "data/annual_tables_list.rds")
 
-
+annual_tables_list %>% 
+  unnest(data) %>% count(index) %>% View()
 ```
 
 
