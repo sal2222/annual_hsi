@@ -11,6 +11,9 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(tsibble)
 library(lubridate)
+library(boot)
+library(MASS)
+library(broom)
 ```
 
 Need to recreate Temp.HI/WBGT May-Sep means and run models for these indices.
@@ -58,47 +61,197 @@ joined_hsi_heat_season <-
     ungroup() %>% 
     mutate(wbgt_f_mean = weathermetrics::celsius.to.fahrenheit(wbgt_u_mean)) %>% 
     dplyr::select(installation, year, type, tmp_f_mean, heat_index_mean, wbgt_f_mean, count, population, rate) %>% 
-    pivot_longer(., cols = tmp_f_mean:wbgt_f_mean, names_to = "index", values_to = "index_value")
+    pivot_longer(., cols = tmp_f_mean:wbgt_f_mean, names_to = "index", values_to = "value")
   
 
 
 
-
-
-
-
-
-
-
-hsi_data <-
-  joined_hsi %>% 
-    left_join(canopy_stats %>% 
-                dplyr::select(installation_lower, mean_canopy),
-              by = c("installation" = "installation_lower")) %>% 
-    filter(!installation %in% "ntc_and_fort_irwin",
-           !(type %in% "Hospitalizations" & year %in% 1990),
+hsi_data_heat_season <-
+  joined_hsi_heat_season %>% 
+    filter(!(type %in% "Hospitalizations" & year %in% 1990),
            !(type %in% "Ambulatory Data" & year %in% 1997)) %>% 
     mutate(installation = factor(installation, ordered = FALSE),
          index = factor(index, ordered = FALSE),
          type = factor(type, ordered = FALSE),
-         bct = factor(bct), 
          installation = relevel(installation, ref = "fort_bliss"))
 
-levels(hsi_data$installation)
+levels(hsi_data_heat_season$installation)
 
-summary(hsi_data)
+summary(hsi_data_heat_season)
 
 
-hsi_select <- hsi_data %>% 
-  filter(index %in% c("days_tmp_gt85pct_may_sep",              #relative, heat season
-                      "days_wbgt_gt85pct_may_sep",             #relative, heat season
-                      "days_heat_index_gt85pct_may_sep",       #relative, heat season
-                      "tmp_mean_may_sep",                      #absolute, heat season
-                      "heat_index_mean_may_sep",               #absolute, heat season
-                      "wbgt_f_mean_may_sep",                   #absolute, heat season
-                      "tmp_f_mean",                            #absolute, year-round
-                      "heat_index_mean",                       #absolute, year-round
-                      "wbgt_f_mean"))                          #absolute, year-round
+```
+
+
+# Prepare data for bootstrap models: separate by outcome type
+```{r}
+
+ambulatory_data <-
+  hsi_data_heat_season  %>%
+      filter(type %in% "Ambulatory Data") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+hospitalization_data <-
+  hsi_data_heat_season  %>%
+      filter(type %in% "Hospitalizations") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+rme_data <-
+  hsi_data_heat_season  %>%
+      filter(type %in% "Reportable Events") %>% 
+      dplyr::select(index, installation, year, count, value, population) %>% 
+      mutate(installation = as.character(installation))
+
+
+
+```
+
+
+
+## Random year blocks
+
+### 2-year block limits (min and max year)
+
+```{r random_blocks}
+
+
+amb_min_yr <- min(as.numeric(
+                 hsi_data_heat_season %>% 
+                  filter(type %in% "Ambulatory Data") %>% 
+                  pull(year)))
+
+amb_max_yr <- max(as.numeric(
+                 hsi_data_heat_season %>% 
+                  filter(type %in% "Ambulatory Data") %>% 
+                  pull(year)))
+
+
+
+hosp_min_yr <- min(as.numeric(
+                 hsi_data_heat_season %>% 
+                  filter(type %in% "Hospitalizations") %>% 
+                  pull(year)))
+
+hosp_max_yr <- max(as.numeric(
+                 hsi_data_heat_season %>% 
+                  filter(type %in% "Hospitalizations") %>% 
+                  pull(year)))
+
+
+rme_min_yr <- min(as.numeric(
+                 hsi_data_heat_season %>% 
+                  filter(type %in% "Reportable Events") %>% 
+                  pull(year)))
+
+rme_max_yr <- max(as.numeric(
+                 hsi_data_heat_season %>% 
+                  filter(type %in% "Reportable Events") %>% 
+                  pull(year)))
+
+
+```
+
+
+### Bootstrap random two year blocks
+Draw random blocks with replacement; stitch to original dataframe length
+
+```{r amb_boot_2yr, eval = FALSE}
+
+amb_index_2yr_fun <- function(outcome_data, i) {
+  # Select random start year
+  random_year <- replicate(10, sample(amb_min_yr:(amb_max_yr - 1), size = 1, replace = TRUE))
+  random_years <- as.integer(c(random_year, random_year + 1))
+  # select the observations to subset. 
+  block_obs <- 
+    random_years %>%
+      map_dfr(~outcome_data %>% filter(year %in% .x))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+# citation("MASS")
+
+ptm <- proc.time()
+
+amb_boot_2yr_block <-
+  ambulatory_data %>% 
+    nest(amb_data = installation:population) %>% 
+  mutate(boot = map(amb_data, ~ boot(., amb_index_2yr_fun, 10000)),
+         tidy = map(boot, ~ broom::tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+         
+         
+ proc.time() - ptm
+
+write_rds(amb_boot_2yr_block, path = "data/amb_boot_2yr_block_hs.rds")
+
+
+
+
+
+
+hosp_index_2yr_fun <- function(outcome_data, i) {
+  # Select random start year
+  random_year <- replicate(13, sample(hosp_min_yr:(hosp_max_yr - 1), size = 1, replace = TRUE))
+  random_years <- as.integer(c(random_year, random_year + 1))
+  
+  # select the observations to subset. 
+  block_obs <- 
+    random_years %>%
+      map_dfr(~outcome_data %>% filter(year %in% .x))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+ptm <- proc.time()
+
+hosp_boot_2yr_block <-
+  hospitalization_data %>% 
+    nest(hosp_data = installation:population) %>% 
+  mutate(boot = map(hosp_data, ~ boot(., hosp_index_2yr_fun, 10000)),
+         tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+         
+proc.time() - ptm
+
+
+write_rds(hosp_boot_2yr_block, path = "data/hosp_boot_2yr_block_hs.rds")
+
+
+
+
+
+rme_index_2yr_fun <- function(outcome_data, i) {
+  # Select random start year
+  random_year <- replicate(11, sample(rme_min_yr:(rme_max_yr - 1), size = 1, replace = TRUE))
+  random_years <- as.integer(c(random_year, random_year + 1))
+  
+  # select the observations to subset. 
+  block_obs <- 
+     random_years %>%
+      map_dfr(~outcome_data %>% filter(year %in% .x))
+  # run regression for given replicate, return estimated coefficients
+  coefficients(MASS::glm.nb(count ~ value + installation + offset(log(population)), data = block_obs))
+}
+
+
+ptm <- proc.time()
+
+rme_boot_2yr_block <-
+  rme_data %>% 
+    nest(re_data = installation:population) %>% 
+  mutate(boot = map(re_data, ~ boot(., rme_index_2yr_fun, 10000)),
+         tidy = map(boot, ~ tidy(., conf.int = TRUE, conf.level = 0.95, conf.method = "basic")))
+        
+proc.time() - ptm
+
+write_rds(rme_boot_2yr_block, path = "data/rme_boot_2yr_block_hs.rds")
+
+
 
 ```
 

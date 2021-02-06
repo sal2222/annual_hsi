@@ -28,6 +28,13 @@ amb_boot_2yr_block <- read_rds("data/amb_boot_2yr_block.rds")
 hosp_boot_2yr_block <- read_rds("data/hosp_boot_2yr_block.rds")
 rme_boot_2yr_block <- read_rds("data/rme_boot_2yr_block.rds")
 
+
+amb_boot_2yr_block_hs <- read_rds("data/amb_boot_2yr_block_hs.rds")
+hosp_boot_2yr_block_hs <- read_rds("data/hosp_boot_2yr_block_hs.rds")
+rme_boot_2yr_block_hs <- read_rds("data/rme_boot_2yr_block_hs.rds")
+
+
+
 amb_boot_2yr_block_all <- read_rds("data/amb_boot_2yr_block_all.rds")
 hosp_boot_2yr_block_all <- read_rds("data/hosp_boot_2yr_block_all.rds")
 rme_boot_2yr_block_all <- read_rds("data/rme_boot_2yr_block_all.rds")
@@ -111,22 +118,34 @@ rme_boot_2yr_block %>%
   unnest(tidy) %>%
   mutate(type = "REPORTABLE EVENTS") %>% 
   dplyr::select(-re_data)
-) %>%
-  dplyr::select(index, term:type) %>% 
+) %>% filter(index %in% c("tmp_f_mean", "heat_index_mean", "wbgt_f_mean")) %>% 
+  mutate(avg_period = "Full year") %>% 
+  bind_rows(
+amb_boot_2yr_block_hs %>% 
+  unnest(tidy) %>%
+  mutate(type = "AMBULATORY",
+         avg_period = "May-Sep") %>% 
+  dplyr::select(-amb_data)  
+) %>% bind_rows(
+  hosp_boot_2yr_block_hs %>% 
+  unnest(tidy) %>%
+  mutate(type = "HOSPITALIZATIONS",
+         avg_period = "May-Sep") %>% 
+  dplyr::select(-hosp_data)
+) %>% bind_rows(
+rme_boot_2yr_block_hs %>% 
+  unnest(tidy) %>%
+  mutate(type = "REPORTABLE EVENTS",
+         avg_period = "May-Sep") %>% 
+  dplyr::select(-re_data)
+) %>% 
+  dplyr::select(-boot) %>% 
   mutate(type = dplyr::recode(type,
                               `AMBULATORY` = "Ambulatory Encounters",
                               `HOSPITALIZATIONS` = "Hospitalizations",
                               `REPORTABLE EVENTS` = "Reportable Events")) %>%
-  filter(term %in% "value",
-         !index %in% c("days_tmp_gt85pct_may_sep",
-                       "days_heat_index_gt85pct_may_sep",
-                       "days_wbgt_gt85pct_may_sep")) %>%
-  mutate(index = dplyr::recode(index, `tmp_mean_may_sep` = "tmp_f_mean_may_sep"),
-         timeframe = case_when(!str_detect(index, "may") ~ "Full Year",
-                               str_detect(index, "may")   ~ "Heat Season (May-Sep)"),  # create column for `full year` or `heat season`
-         index = case_when(!str_detect(index, "may") ~ as.character(index),
-                           str_detect(index, "may") ~ as.character(str_remove(index, "_may_sep"))),  # remove `_may_sep` suffix
-         index = fct_relevel(index, c("wbgt_f_mean", "heat_index_mean")),  # orders from bottom to top
+  filter(term %in% "value") %>%
+  mutate(index = fct_relevel(index, c("wbgt_f_mean", "heat_index_mean")),  # orders from bottom to top
          #index = forcats::fct_reorder(index, desc(statistic - bias )) # order index by bootstrap mean (statistic - bias) for plot appearance
          index = dplyr::recode(index,
                               `tmp_f_mean` = "Temperature (°F)",
@@ -134,17 +153,17 @@ rme_boot_2yr_block %>%
                               `wbgt_f_mean` = "WBGT (°F)")
                           ) %>% 
   ggplot() +
-        geom_point(aes(x = exp(statistic), y = index), shape = 1, fill = "white", color = "black", size = 4) +
+        geom_point(aes(x = exp(statistic), y = index), shape = 1, fill = "white", color = "green4", size = 4) +
         geom_point(aes(x = exp(statistic - bias), y = index), size = 4) +
         geom_text(aes(x = exp(statistic - bias), y = index, 
                       label = round(exp(statistic - bias), 2)), 
-                      hjust = 0.5, vjust = 1.75, size = 3) +
+                      hjust = 0.5, vjust = 2, size = 3) +
         geom_errorbarh(
           aes(y = index,
               xmin = exp(conf.low),
               xmax = exp(conf.high)), size = 1.1) +
          geom_vline(aes(xintercept = 1), colour = "blue", linetype = "dashed") +
-         facet_grid(vars(timeframe), vars(type)) +
+         facet_grid(vars(avg_period), vars(type)) +
          theme_bw() +
          theme(#axis.text.y = element_text(size = rel(0.75)),
                axis.title.y = element_blank()) +
@@ -1675,8 +1694,6 @@ hsi_select %>%
   dplyr::select(count, population, count_overall) %>% 
   summarise_all(funs(sum))
 
-
-((3612 / 204291) * 1.05) * 204291
 
 
 # 2018 hospitalizations
