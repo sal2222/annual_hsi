@@ -79,18 +79,18 @@ hsi_data %>%
   geom_point() +
   geom_smooth(method = "lm", size = 1.5) +
   facet_wrap(vars(type), scales = "free_y") +
-  ggtitle("Combined HSI outcome rates for ten CONUS Army installations") +
-  ylab("Combined HSI Rate \n (per 1,000/year)") +
+#  ggtitle("Combined HSI outcome rates for ten CONUS Army installations") +
+  ylab("HSI Rate \n (per 1,000/year)") +
   xlab(NULL) +
   theme(plot.title = element_text(family = "ariel", face = "bold", size = 9)) + 
-  labs(caption = "The line represents a linear model and the shaded area models 95% confidence levels.\n Note that the scales vary by outcome category at orders of magnitude.") +
+ # labs(caption = "The line represents a linear model and the shaded area models 95% confidence levels. Note that the scales vary by outcome category\nby orders of magnitude.") +
   theme_bw() +
   theme(plot.caption = element_text(hjust = 0, size = 9)) 
 
 
 ggsave(filename = "figure1.pdf", path = "output")
 
-ggsave(filename = "HSI_rates.png", path = "output", width = 6, height = 3)
+ggsave(filename = "figure1.png", path = "output", width = 6, height = 3)
 
 ```
 
@@ -104,75 +104,82 @@ RRs for active-duty HSI encounters at 10 CONUS U.S. Army installations per 1° i
 
 ```{r}
 
-amb_boot_2yr_block %>% 
-  unnest(tidy) %>%
-  mutate(type = "AMBULATORY") %>% 
-  dplyr::select(-amb_data) %>% 
-  bind_rows(
-hosp_boot_2yr_block %>% 
-  unnest(tidy) %>%
-  mutate(type = "HOSPITALIZATIONS") %>% 
-  dplyr::select(-hosp_data)
-) %>% bind_rows(
-rme_boot_2yr_block %>% 
-  unnest(tidy) %>%
-  mutate(type = "REPORTABLE EVENTS") %>% 
-  dplyr::select(-re_data)
-) %>% filter(index %in% c("tmp_f_mean", "heat_index_mean", "wbgt_f_mean")) %>% 
-  mutate(avg_period = "Full year") %>% 
-  bind_rows(
-amb_boot_2yr_block_hs %>% 
-  unnest(tidy) %>%
-  mutate(type = "AMBULATORY",
-         avg_period = "May-Sep") %>% 
-  dplyr::select(-amb_data)  
-) %>% bind_rows(
-  hosp_boot_2yr_block_hs %>% 
-  unnest(tidy) %>%
-  mutate(type = "HOSPITALIZATIONS",
-         avg_period = "May-Sep") %>% 
-  dplyr::select(-hosp_data)
-) %>% bind_rows(
-rme_boot_2yr_block_hs %>% 
-  unnest(tidy) %>%
-  mutate(type = "REPORTABLE EVENTS",
-         avg_period = "May-Sep") %>% 
-  dplyr::select(-re_data)
-) %>% 
-  dplyr::select(-boot) %>% 
-  mutate(type = dplyr::recode(type,
-                              `AMBULATORY` = "Ambulatory Encounters",
-                              `HOSPITALIZATIONS` = "Hospitalizations",
-                              `REPORTABLE EVENTS` = "Reportable Events")) %>%
-  filter(term %in% "value") %>%
-  mutate(index = fct_relevel(index, c("wbgt_f_mean", "heat_index_mean")),  # orders from bottom to top
-         #index = forcats::fct_reorder(index, desc(statistic - bias )) # order index by bootstrap mean (statistic - bias) for plot appearance
-         index = dplyr::recode(index,
-                              `tmp_f_mean` = "Temperature (°F)",
-                              `heat_index_mean` = "Heat Index (°F)",
-                              `wbgt_f_mean` = "WBGT (°F)")
-                          ) %>% 
+to_fig2 <-
+  amb_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "AMBULATORY") %>% 
+    dplyr::select(-amb_data) %>% 
+    bind_rows(
+  hosp_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "HOSPITALIZATIONS") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block %>% 
+    unnest(tidy) %>%
+    mutate(type = "REPORTABLE EVENTS") %>% 
+    dplyr::select(-re_data)
+  ) %>% filter(index %in% c("tmp_f_mean", "heat_index_mean", "wbgt_f_mean")) %>% 
+    mutate(avg_period = "Full year") %>% 
+    bind_rows(
+  amb_boot_2yr_block_hs %>% 
+    unnest(tidy) %>%
+    mutate(type = "AMBULATORY",
+           avg_period = "May-Sep") %>% 
+    dplyr::select(-amb_data)  
+  ) %>% bind_rows(
+    hosp_boot_2yr_block_hs %>% 
+    unnest(tidy) %>%
+    mutate(type = "HOSPITALIZATIONS",
+           avg_period = "May-Sep") %>% 
+    dplyr::select(-hosp_data)
+  ) %>% bind_rows(
+  rme_boot_2yr_block_hs %>% 
+    unnest(tidy) %>%
+    mutate(type = "REPORTABLE EVENTS",
+           avg_period = "May-Sep") %>% 
+    dplyr::select(-re_data)
+  ) %>% 
+    dplyr::select(-boot) %>% 
+    mutate(type = dplyr::recode(type,
+                                `AMBULATORY` = "Ambulatory Encounters",
+                                `HOSPITALIZATIONS` = "Hospitalizations",
+                                `REPORTABLE EVENTS` = "Reportable Events")) %>%
+    filter(term %in% "value") %>%
+    mutate(index = fct_relevel(index, c("wbgt_f_mean", "heat_index_mean")),  # orders from bottom to top
+           #index = forcats::fct_reorder(index, desc(statistic - bias )) # order index by bootstrap mean (statistic - bias) for plot appearance
+           index = dplyr::recode(index,
+                                `tmp_f_mean` = "Temperature (°F)",
+                                `heat_index_mean` = "Heat Index (°F)",
+                                `wbgt_f_mean` = "WBGT (°F)")
+                            ) 
+
+
+to_fig2 %>% 
   ggplot() +
-        geom_point(aes(x = exp(statistic), y = index), shape = 1, fill = "white", color = "green4", size = 4) +
-        geom_point(aes(x = exp(statistic - bias), y = index), size = 4) +
+        geom_point(aes(x = exp(statistic), y = index), shape = 1, fill = "white", color = "green4", size = 3.25) +
+        geom_point(aes(x = exp(statistic - bias), y = index), size = 3.25) +
         geom_text(aes(x = exp(statistic - bias), y = index, 
                       label = round(exp(statistic - bias), 2)), 
                       hjust = 0.5, vjust = 2, size = 3) +
         geom_errorbarh(
           aes(y = index,
               xmin = exp(conf.low),
-              xmax = exp(conf.high)), size = 1.1) +
+              xmax = exp(conf.high)), size = 1.03) +
          geom_vline(aes(xintercept = 1), colour = "blue", linetype = "dashed") +
          facet_grid(vars(avg_period), vars(type)) +
          theme_bw() +
          theme(#axis.text.y = element_text(size = rel(0.75)),
                axis.title.y = element_blank()) +
-         xlab("Rate Ratio") 
+         xlab("Rate Ratio") +
+#  ggtitle("Rate ratios for full-year and heat season indices of heat and HSI encounters\nat 10 CONUS U.S. Army installations") + 
+#  labs(caption = "RRs per 1 degree increase in annual index of heat (mean of daily means) from 2-year block bootstrap negative binomial models\nwith basic (empirical) confidence intervals based on 10,000 replicates, controlling for installation-level effects.\nSolid points reflect the mean of bootstrap estimates and unfilled points reflect the original sample (non-bootstrap) estimate.") +
+   theme(plot.caption = element_text(hjust = 0, size = 9)) 
 
 
 ggsave(filename = "figure2.pdf", path = "output")
 # ggsave(filename = "2yr_main_plot.png", path = "output", width = 8, height = 5)
-
+ggsave(filename = "figure2.png", path = "output", width = 8, height = 5)
 
 
 ```

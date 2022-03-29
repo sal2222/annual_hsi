@@ -1,0 +1,47 @@
+---
+title: "full_table"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+
+```
+
+
+
+```{r}
+
+boot2_all_basic95ci <- read_csv("data/boot2_all_basic95ci.csv")
+
+```
+
+
+```{r}
+
+
+boot2_all_basic_rr_table <-
+  boot2_all_basic95ci %>%
+    dplyr::select(index, outcome, rate_ratio) %>% 
+    pivot_wider(names_from = outcome, values_from = rate_ratio)
+
+
+ write_csv(boot2_all_basic_rr_table, file = "output/boot2_all_basic_rr_table.csv")
+
+
+
+
+
+```
+
+
+```{r}
+
+index_long
+annual_tables_list
+```
+

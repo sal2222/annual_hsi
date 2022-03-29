@@ -15,7 +15,7 @@ This code imports and tidies data processed in the `heat_stress` project for dat
 ```{r import}
 
 dmed_tidy <- 
-  read_rds("D:/dmed/dmed_tidy.rds")
+  read_rds("data/dmed_tidy.rds")
 
 # write_rds(dmed_tidy, file = "data/dmed_tidy.rds")
 
